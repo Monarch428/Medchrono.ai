@@ -255,12 +255,18 @@ Please verify the file integrity and try again.`
 
     if (extractedText && process.env.OPENAI_API_KEY) {
       try {
+        // For large documents, use a higher token limit
+        const contentLength = extractedText.length
+        const maxTokens = contentLength > 10000 ? 4096 : 3000
+
+        console.log(`Processing document with ${contentLength} characters, using ${maxTokens} max tokens`)
+
         const analysisResponse = await openai.chat.completions.create({
           model: "gpt-4o",
           messages: [
             {
               role: "system",
-              content: `You are an expert medical chronology analyst specializing in personal injury cases. Extract detailed medical information from documents.
+              content: `You are an expert medical chronology analyst specializing in personal injury cases. Extract detailed medical information from documents with comprehensive summaries.
 
 IMPORTANT: Extract actual dates from the document. Do NOT return placeholder text like "YYYY-MM-DD" - return the actual date found or null if no date exists.
 
@@ -269,10 +275,15 @@ Return a JSON object with this exact structure:
   "documentType": "police_report|ems|er_visit|office_visit|pt|imaging|lab_results|surgical_report|discharge_summary",
   "serviceDate": "actual date in YYYY-MM-DD format (e.g., \"2024-03-15\") or null if truly not found",
   "provider": "provider name and credentials",
+  "caseSummaryPoints": [
+    "Clear, concise summary point about key medical finding or event (3-4 sentences each)",
+    "Another important summary point with context and significance",
+    "Include at least 5-10 comprehensive summary points covering all major aspects"
+  ],
   "keyFindings": [
     {
       "type": "diagnosis|symptom|treatment|medication|test_result|vital_sign",
-      "finding": "specific medical finding",
+      "finding": "specific detailed medical finding with context",
       "significance": "high|medium|low",
       "bodyPart": "affected body part or null"
     }
@@ -281,7 +292,7 @@ Return a JSON object with this exact structure:
     {
       "date": "actual date in YYYY-MM-DD format (e.g., \"2024-03-15\")",
       "time": "actual time in HH:MM format (e.g., \"14:30\") or null if not found",
-      "event": "detailed description of what happened",
+      "event": "detailed description of what happened with full context",
       "type": "incident|treatment|diagnosis|test|follow_up|admission|discharge"
     }
   ],
@@ -300,39 +311,43 @@ Return a JSON object with this exact structure:
     "oxygenSaturation": "percentage or null"
   },
   "missingRecords": [
-    {
-      "type": "type of missing record needed",
-      "significance": "why this record is important for the personal injury case",
-      "urgency": "high|medium|low"
-    }
+    "Missing record description as string (e.g., 'Follow-up X-ray results from 03/2024')",
+    "Another missing record needed for complete case documentation"
   ]
 }`,
             },
             {
               role: "user",
-              content: `Analyze this medical document for a personal injury chronology. Extract all relevant medical information:
+              content: `Analyze this medical document for a personal injury chronology. Provide a comprehensive analysis with detailed summaries.
 
 Document: ${document.filename}
-Content: ${extractedText.substring(0, 8000)}
+Content: ${extractedText.substring(0, 12000)}
 
 CRITICAL INSTRUCTIONS:
 1. Extract ACTUAL dates from the document - look for any date references (service dates, visit dates, incident dates, etc.)
 2. Do NOT use placeholder text like "YYYY-MM-DD" or "HH:MM" - use real dates found in the document
 3. If no date is found, use null instead of placeholders
 4. Look for dates in various formats: MM/DD/YYYY, DD-MM-YYYY, written dates, etc.
+5. CREATE COMPREHENSIVE CASE SUMMARY POINTS - Each point should be 3-4 sentences providing detailed context about the medical event, diagnosis, treatment, or finding
 
-Focus on extracting:
-1. Specific diagnoses, symptoms, and medical conditions
-2. Treatments, procedures, medications, and therapies
-3. Timeline of events with ACTUAL precise dates and times from the document
-4. Provider information and medical facility details
-5. Patient history and pre-existing conditions
-6. Test results, vital signs, and clinical findings
-7. Any references to the injury incident or accident
-8. Missing records that would be valuable for the case`,
+Focus on extracting with MAXIMUM DETAIL:
+1. Case Summary Points: Create 5-10 comprehensive narrative summaries of key findings. Each should tell a complete story about a specific medical aspect.
+2. Specific diagnoses, symptoms, and medical conditions with full context and severity
+3. Treatments, procedures, medications, and therapies with dosages and frequencies when available
+4. Timeline of events with ACTUAL precise dates and times from the document, including comprehensive event descriptions
+5. Provider information including names, credentials, facilities, and departments
+6. Patient history including pre-existing conditions, previous treatments, and relevant background
+7. Test results with values, ranges, and clinical interpretation when available
+8. Vital signs with measurements and clinical significance
+9. Any references to the injury incident or accident with complete narrative
+10. Missing records as simple strings describing what's needed (not objects)
+
+EXAMPLE CASE SUMMARY POINT FORMAT:
+"Patient presented to the emergency department on 03/15/2024 at 14:30 following a motor vehicle accident. Chief complaint included severe lower back pain rated 8/10 and numbness in the left leg. Initial examination revealed limited range of motion and positive straight leg raise test, indicating possible lumbar radiculopathy."`,
             },
           ],
-          max_tokens: 3000,
+          max_tokens: maxTokens,
+          temperature: 0.3, // Lower temperature for more consistent, factual extraction
         })
 
         let analysisText = analysisResponse.choices[0]?.message?.content || ""
@@ -345,12 +360,25 @@ Focus on extracting:
 
           keyFindings = analysis.keyFindings || []
           timelineEvents = analysis.timelineEvents || []
-          missingRecords = analysis.missingRecords || []
+
+          // Ensure missingRecords is an array of strings
+          if (Array.isArray(analysis.missingRecords)) {
+            missingRecords = analysis.missingRecords.map((record: any) => {
+              if (typeof record === 'string') return record
+              if (typeof record === 'object' && record.type) {
+                return `${record.type}${record.significance ? ': ' + record.significance : ''}`
+              }
+              return String(record)
+            })
+          } else {
+            missingRecords = []
+          }
 
           medicalData = {
             documentType: analysis.documentType || "medical_record",
             serviceDate: analysis.serviceDate,
             provider: analysis.provider || "Healthcare Provider",
+            caseSummaryPoints: analysis.caseSummaryPoints || [],
             patientHistory: analysis.patientHistory || {},
             vitalSigns: analysis.vitalSigns || {},
             analysisComplete: true,

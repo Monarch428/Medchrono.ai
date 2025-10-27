@@ -439,8 +439,20 @@ const DocumentUpload = () => {
         ),
       )
 
-      // Step 2: Upload directly to Supabase Storage
+      // Step 2: Upload directly to Supabase Storage with progress tracking
       console.log("Uploading directly to Supabase Storage...")
+
+      // For large files, show intermediate progress
+      const fileSize = uploadedFile.file.size
+      if (fileSize > 50 * 1024 * 1024) { // > 50MB
+        console.log(`Large file detected: ${(fileSize / 1024 / 1024).toFixed(2)}MB - showing progress`)
+        setUploadedFiles((prev) =>
+          prev.map((f) =>
+            f.id === uploadedFile.id ? { ...f, progress: 25 } : f,
+          ),
+        )
+      }
+
       const uploadResponse = await fetch(signedUrl, {
         method: "PUT",
         body: uploadedFile.file,
@@ -558,7 +570,20 @@ const DocumentUpload = () => {
       await new Promise((resolve) => setTimeout(resolve, 1500))
 
       // Use the processResult we already parsed above
-      let analysis = {
+      let analysis: {
+        documentType: string
+        confidence: number
+        medicalTerminology: string[]
+        keyFindings: string[]
+        dateOfService: string
+        providerName: string
+        bodySystemsAffected: string[]
+        treatmentProvided: string[]
+        diagnosisCodes: string[]
+        qualityFlags: string[]
+        timeline: any[]
+        missingInformation: string[]
+      } = {
         documentType: "Medical Document",
         confidence: 85,
         medicalTerminology: ["medical record", "clinical data"],
@@ -587,13 +612,25 @@ const DocumentUpload = () => {
         // Check if we got data from Python backend (has caseSummaryPoints) or standard processing
         const isPythonBackend = processResult.medicalData?.caseSummaryPoints !== undefined
 
+        // Ensure missingInformation is always an array of strings
+        let missingInfo: string[] = []
+        if (processResult.missingRecords) {
+          missingInfo = Array.isArray(processResult.missingRecords)
+            ? processResult.missingRecords.map((r: any) => typeof r === 'string' ? r : String(r))
+            : []
+        } else if (processResult.medicalData?.keyIssues) {
+          missingInfo = Array.isArray(processResult.medicalData.keyIssues)
+            ? processResult.medicalData.keyIssues
+            : []
+        }
+
         analysis = {
           documentType: processResult.documentType || processResult.medicalData?.documentType || "Medical Record",
           confidence: 95, // Python backend provides comprehensive analysis
           medicalTerminology: processResult.medicalData?.medicalTerminology || ["medical record"],
           keyFindings: isPythonBackend
             ? processResult.medicalData?.caseSummaryPoints || []
-            : processResult.keyFindings?.map((f: any) => f.finding) || ["Document processed"],
+            : processResult.medicalData?.caseSummaryPoints || processResult.keyFindings?.map((f: any) => f.finding) || ["Document processed"],
           dateOfService: serviceDate || "Date not found", // Display "Date not found" instead of today's date
           providerName: processResult.provider || processResult.medicalData?.provider || "Healthcare Provider",
           bodySystemsAffected: ["General"],
@@ -603,7 +640,7 @@ const DocumentUpload = () => {
           diagnosisCodes: [],
           qualityFlags: [],
           timeline: processResult.timelineEvents || [],
-          missingInformation: processResult.medicalData?.keyIssues || [],
+          missingInformation: missingInfo,
         }
         console.log(
           `Document processing completed with ${isPythonBackend ? "Python backend" : "standard processing"}. Service date:`,

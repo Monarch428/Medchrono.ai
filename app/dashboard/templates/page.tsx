@@ -271,7 +271,7 @@ ${chronologyData.documents
   .map(
     (doc: any) => `Provider: ${doc.provider || "Unknown"}
 Date: ${doc.dateOfService || "N/A"}
-Records Required: ${doc.missingInformation.join(", ")}
+Records Required: ${Array.isArray(doc.missingInformation) ? doc.missingInformation.join(", ") : doc.missingInformation || "N/A"}
 Significance: Complete case documentation`,
   )
   .join("\n\n")}
@@ -758,7 +758,7 @@ End of Report
                                 <td className="border border-gray-300 p-2">{doc.provider || "Unknown"}</td>
                                 <td className="border border-gray-300 p-2">{doc.dateOfService || "N/A"}</td>
                                 <td className="border border-gray-300 p-2">
-                                  {doc.missingInformation.join(", ")}
+                                  {Array.isArray(doc.missingInformation) ? doc.missingInformation.join(", ") : doc.missingInformation || "N/A"}
                                 </td>
                                 <td className="border border-gray-300 p-2">Complete case documentation</td>
                               </tr>
