@@ -70,9 +70,6 @@ settings.pyc
 htmlcov/
 .tox/
 
-ai-backend/app/sample-output.json
-
+ 
 PYTHON_BACKEND_SETUP.md
-SUPABASE_SETUP.md
-ai-backend/start.sh
-ai-backend
+SUPABASE_SETUP.md 
