@@ -9,6 +9,12 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  // Increase timeout for API routes with server actions
+  experimental: {
+    serverActions: {
+      bodySizeLimit: '500mb',
+    },
+  },
 }
 
 export default nextConfig

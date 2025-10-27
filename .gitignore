@@ -2,10 +2,12 @@
 
 # dependencies
 /node_modules
+/node_modules.
 
 # next.js
 /.next/
 /out/
+
 
 # production
 /build
@@ -25,3 +27,51 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+
+
+
+#python
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+venv/
+.env/
+env/
+
+# Editor/IDE specific files
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+
+# Logs and temporary files
+*.log
+*.tmp
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Distribution and packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Environment variables and sensitive data
+.env
+settings.pyc
+
+# Test and coverage reports
+.coverage
+htmlcov/
+.tox/
+
+ai-backend/app/sample-output.json
+
+PYTHON_BACKEND_SETUP.md
+SUPABASE_SETUP.md
+ai-backend/start.sh

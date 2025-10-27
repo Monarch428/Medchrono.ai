@@ -82,26 +82,78 @@ interface CaseData {
 export default function DashboardPage() {
   const [filterOpen, setFilterOpen] = useState(false)
   const [selectedFilter, setSelectedFilter] = useState("All Cases")
-  const [activeCases, setActiveCases] = useState<CaseData[]>([])
+  const [activeCases, setActiveCases] = useState<CaseData[]>([
+    //for static data testing 
+    {
+      id: "1",
+      name: "Doe vs ABC Medical Center",
+      client: "John Doe",
+      dateOfIncident: "2025-03-12",
+      injuryType: "Head Injury",
+      subCategory: "Traumatic Brain Injury",
+      status: "Open",
+      priority: "High",
+      progress: 65,
+      estimatedValue: "$120,000",
+      attorney: "Alice Johnson",
+      lastActivity: "2025-10-07",
+      createdAt: "2025-03-15",
+    },{
+      id: "2",
+      name: "Smith vs XYZ Insurance",
+      client: "Jane Smith",
+      dateOfIncident: "2024-11-02",
+      injuryType: "Spinal Cord Injury",
+      subCategory: "Fracture",
+      status: "In Progress",
+      priority: "Medium",
+      progress: 40,
+      estimatedValue: "$80,000",
+      attorney: "Robert Lee",
+      lastActivity: "2025-09-29",
+      createdAt: "2024-11-05",
+    },
+    {
+      id: "3",
+      name: "Johnson vs City Transport",
+      client: "Mark Johnson",
+      dateOfIncident: "2023-08-20",
+      injuryType: "Whiplash",
+      subCategory: "Neck Injury",
+      status: "Closed",
+      priority: "Low",
+      progress: 100,
+      estimatedValue: "$50,000",
+      attorney: "Emma Davis",
+      lastActivity: "2025-08-30",
+      createdAt: "2023-08-25",
+    },
+  ])
   const [loading, setLoading] = useState(true)
 
   const filterOptions = ["All Cases", "High Priority", "Recent Activity", "Pending Analysis", "Completed Cases"]
 
-  useEffect(() => {
-    const loadCases = () => {
-      try {
-        const cases = JSON.parse(localStorage.getItem("medchrono_cases") || "[]")
-        setActiveCases(cases)
-      } catch (error) {
-        console.error("Error loading cases:", error)
-        setActiveCases([])
-      } finally {
-        setLoading(false)
-      }
-    }
+  // useEffect(() => {
+  //   const loadCases = () => {
+  //     try {
+  //       const cases = JSON.parse(localStorage.getItem("medchrono_cases") || "[]")
+  //       setActiveCases(cases)
+  //     } catch (error) {
+  //       console.error("Error loading cases:", error)
+  //       setActiveCases([])
+  //     } finally {
+  //       setLoading(false)
+  //     }
+  //   }
 
-    loadCases()
-  }, [])
+  //   loadCases()
+  // }, [])
+
+  //  for static data testing
+  useEffect(() => {
+  setLoading(false)
+}, [])
+
 
   const totalCases = activeCases.length
   const avgProgress = totalCases > 0 ? Math.round(activeCases.reduce((sum, c) => sum + c.progress, 0) / totalCases) : 0

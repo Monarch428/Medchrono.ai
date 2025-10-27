@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
+import { DocumentChatbot } from "@/components/DocumentChatbot"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -112,10 +113,37 @@ const DocumentUpload = () => {
   const [isGeneratingChronology, setIsGeneratingChronology] = useState(false)
   const [chronologyData, setChronologyData] = useState<any>(null)
 
-  // Load real cases from localStorage instead of dummy data
+  // Load real cases from API instead of localStorage
   useEffect(() => {
-    const cases = JSON.parse(localStorage.getItem("medchrono_cases") || "[]")
-    setStoredCases(cases)
+    const fetchCases = async () => {
+      try {
+        const response = await fetch("/api/cases")
+        if (response.ok) {
+          const data = await response.json()
+          if (data.success && data.cases) {
+            // Map API response to match expected format
+            const mappedCases = data.cases.map((c: any) => ({
+              id: String(c.id), // Convert UUID to string for TEXT case_id compatibility
+              name: c.case_name,
+              client: c.client_name,
+            }))
+            setStoredCases(mappedCases)
+          }
+        } else {
+          console.error("Failed to fetch cases from API")
+          // Fallback to localStorage if API fails
+          const cases = JSON.parse(localStorage.getItem("medchrono_cases") || "[]")
+          setStoredCases(cases)
+        }
+      } catch (error) {
+        console.error("Error fetching cases:", error)
+        // Fallback to localStorage if API fails
+        const cases = JSON.parse(localStorage.getItem("medchrono_cases") || "[]")
+        setStoredCases(cases)
+      }
+    }
+
+    fetchCases()
   }, [])
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -165,15 +193,66 @@ const DocumentUpload = () => {
     setIsGeneratingChronology(true)
 
     try {
-      // Collect all processed documents
-      const processedDocs = uploadedFiles.filter((file) => file.status === "complete" && file.extractedData)
+      // Collect all processed documents with FULL data including Python backend results
+      const processedDocs = uploadedFiles.filter((file) => file.status === "complete" && file.extractedData && file.documentId)
 
       if (processedDocs.length === 0) {
         alert("No processed documents available for chronology generation")
         return
       }
 
-      // Prepare chronology data
+      // Try batch processing with Python backend for comprehensive analysis
+      if (processedDocs.length > 1) {
+        try {
+          console.log("Attempting batch processing with Python backend for", processedDocs.length, "documents")
+          const batchResponse = await fetch("/api/chronology/batch", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              documentIds: processedDocs.map((doc) => doc.documentId),
+            }),
+          })
+
+          if (batchResponse.ok) {
+            const batchResult = await batchResponse.json()
+            console.log("Batch processing successful:", batchResult)
+
+            // Update files with batch processing results
+            if (batchResult.analyses && batchResult.analyses.length > 0) {
+              batchResult.analyses.forEach((analysis: any, index: number) => {
+                const fileIndex = uploadedFiles.findIndex((f) => f.documentId === processedDocs[index]?.documentId)
+                if (fileIndex !== -1) {
+                  setUploadedFiles((prev) =>
+                    prev.map((f, idx) =>
+                      idx === fileIndex
+                        ? {
+                            ...f,
+                            extractedData: {
+                              ...f.extractedData,
+                              provider: analysis.provider,
+                              dateOfService: analysis.dateOfService || f.extractedData?.dateOfService,
+                              keyFindings: analysis.medicalData?.caseSummaryPoints || f.extractedData?.keyFindings,
+                              timeline: analysis.timelineEvents || f.extractedData?.timeline,
+                            },
+                          }
+                        : f,
+                    ),
+                  )
+                }
+              })
+              console.log("Updated documents with batch processing results")
+            }
+          } else {
+            console.warn("Batch processing failed, continuing with existing data")
+          }
+        } catch (batchError) {
+          console.warn("Batch processing error, continuing with existing data:", batchError)
+        }
+      }
+
+      // Prepare chronology data with timeline entries
       const chronologyEntries = []
 
       for (const doc of processedDocs) {
@@ -193,7 +272,9 @@ const DocumentUpload = () => {
         } else {
           // Create entry from document metadata if no timeline exists
           chronologyEntries.push({
-            date: doc.extractedData?.dateOfService || new Date().toISOString().split("T")[0],
+            date: doc.extractedData?.dateOfService !== "Date not found"
+              ? doc.extractedData?.dateOfService
+              : new Date().toISOString().split("T")[0],
             event: `Medical record from ${doc.extractedData?.provider || "Healthcare Provider"}`,
             source: doc.name,
             provider: doc.extractedData?.provider,
@@ -207,7 +288,7 @@ const DocumentUpload = () => {
       // Sort chronologically
       chronologyEntries.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
 
-      // Generate comprehensive analysis
+      // Generate comprehensive analysis with ALL document details
       const comprehensiveAnalysis = {
         totalDocuments: processedDocs.length,
         dateRange: {
@@ -220,6 +301,23 @@ const DocumentUpload = () => {
         allTreatments: [...new Set(processedDocs.flatMap((doc) => doc.extractedData?.treatmentProvided || []))],
         medicalTerminology: [...new Set(processedDocs.flatMap((doc) => doc.extractedData?.medicalTerminology || []))],
         timeline: chronologyEntries,
+        // Store detailed document information for comprehensive view
+        documents: processedDocs.map((doc) => ({
+          name: doc.name,
+          documentId: doc.documentId,
+          category: doc.category,
+          confidence: doc.confidence,
+          provider: doc.extractedData?.provider,
+          dateOfService: doc.extractedData?.dateOfService,
+          documentType: doc.extractedData?.documentType,
+          keyFindings: doc.extractedData?.keyFindings || [],
+          treatmentProvided: doc.extractedData?.treatmentProvided || [],
+          missingInformation: doc.extractedData?.missingInformation || [],
+          medicalTerminology: doc.extractedData?.medicalTerminology || [],
+          bodySystemsAffected: doc.extractedData?.bodySystemsAffected || [],
+          // Store the full extracted data for detailed view
+          fullExtractedData: doc.extractedData,
+        })),
       }
 
       setChronologyData(comprehensiveAnalysis)
@@ -312,8 +410,9 @@ const DocumentUpload = () => {
       )
       await new Promise((resolve) => setTimeout(resolve, 2000))
 
-      // Process document
-      const processResponse = await fetch("/api/documents/process", {
+      // Process document with Python backend for chronology
+      console.log("Calling Python backend for chronology generation...")
+      const chronologyResponse = await fetch("/api/chronology/summarize", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -322,20 +421,48 @@ const DocumentUpload = () => {
       })
 
       let processResult: any = {}
-      if (processResponse.ok) {
+      if (chronologyResponse.ok) {
         try {
-          processResult = await processResponse.json()
-          console.log("Processing result:", processResult)
+          processResult = await chronologyResponse.json()
+          console.log("Python chronology result:", processResult)
         } catch (parseError) {
-          console.warn("Could not parse processing response, using fallback")
+          console.warn("Could not parse chronology response, falling back to standard processing")
+
+          // Fallback to standard processing if Python backend fails
+          const processResponse = await fetch("/api/documents/process", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ documentId }),
+          })
+
+          if (processResponse.ok) {
+            processResult = await processResponse.json()
+            console.log("Fallback processing result:", processResult)
+          }
         }
       } else {
-        console.warn("Processing API failed, using fallback analysis")
+        console.warn("Python chronology API failed, falling back to standard processing")
         try {
-          const errorData = await processResponse.json()
-          console.error("Processing API error:", errorData)
+          const errorData = await chronologyResponse.json()
+          console.error("Chronology API error:", errorData)
         } catch (parseError) {
-          console.error("Processing failed with status:", processResponse.status)
+          console.error("Chronology failed with status:", chronologyResponse.status)
+        }
+
+        // Fallback to standard processing
+        const processResponse = await fetch("/api/documents/process", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ documentId }),
+        })
+
+        if (processResponse.ok) {
+          processResult = await processResponse.json()
+          console.log("Fallback processing result:", processResult)
         }
       }
 
@@ -349,12 +476,13 @@ const DocumentUpload = () => {
       )
       await new Promise((resolve) => setTimeout(resolve, 1500))
 
+      // Use the processResult we already parsed above
       let analysis = {
         documentType: "Medical Document",
         confidence: 85,
         medicalTerminology: ["medical record", "clinical data"],
         keyFindings: ["Document processed successfully"],
-        dateOfService: new Date().toISOString().split("T")[0],
+        dateOfService: "Date not found",
         providerName: "Healthcare Provider",
         bodySystemsAffected: ["General"],
         treatmentProvided: ["Medical evaluation"],
@@ -364,23 +492,42 @@ const DocumentUpload = () => {
         missingInformation: [],
       }
 
-      if (processResponse.ok) {
-        const processResult = await processResponse.json()
+      if (processResult.success) {
+        // Use actual serviceDate from medicalData, NOT timeline or today's date
+        let serviceDate = processResult.dateOfService || processResult.medicalData?.serviceDate || null
+
+        // If serviceDate is today, it's likely invalid - set to null
+        const today = new Date().toISOString().split("T")[0]
+        if (serviceDate === today) {
+          console.warn("Service date is today - likely not found in document")
+          serviceDate = null
+        }
+
+        // Check if we got data from Python backend (has caseSummaryPoints) or standard processing
+        const isPythonBackend = processResult.medicalData?.caseSummaryPoints !== undefined
+
         analysis = {
-          documentType: processResult.medicalData?.documentType || "Medical Record",
-          confidence: 90,
+          documentType: processResult.documentType || processResult.medicalData?.documentType || "Medical Record",
+          confidence: 95, // Python backend provides comprehensive analysis
           medicalTerminology: processResult.medicalData?.medicalTerminology || ["medical record"],
-          keyFindings: processResult.keyFindings?.map((f: any) => f.finding) || ["Document processed"],
-          dateOfService: processResult.timelineEvents?.[0]?.date || new Date().toISOString().split("T")[0],
-          providerName: processResult.medicalData?.provider || "Healthcare Provider",
+          keyFindings: isPythonBackend
+            ? processResult.medicalData?.caseSummaryPoints || []
+            : processResult.keyFindings?.map((f: any) => f.finding) || ["Document processed"],
+          dateOfService: serviceDate || "Date not found", // Display "Date not found" instead of today's date
+          providerName: processResult.provider || processResult.medicalData?.provider || "Healthcare Provider",
           bodySystemsAffected: ["General"],
-          treatmentProvided: ["Medical evaluation"],
+          treatmentProvided: isPythonBackend
+            ? processResult.medicalData?.actionsTaken || ["Medical evaluation"]
+            : ["Medical evaluation"],
           diagnosisCodes: [],
           qualityFlags: [],
           timeline: processResult.timelineEvents || [],
-          missingInformation: [],
+          missingInformation: processResult.medicalData?.keyIssues || [],
         }
-        console.log("Document processing completed successfully")
+        console.log(
+          `Document processing completed with ${isPythonBackend ? "Python backend" : "standard processing"}. Service date:`,
+          serviceDate,
+        )
       } else {
         console.warn("Processing API returned error, using fallback analysis")
       }
@@ -952,7 +1099,7 @@ const DocumentUpload = () => {
                       <div>
                         <h4 className="font-medium mb-3">Healthcare Providers ({chronologyData.providers.length})</h4>
                         <div className="space-y-2">
-                          {chronologyData.providers.map((provider, index) => (
+                          {chronologyData.providers.map((provider: string, index: number) => (
                             <div key={index} className="flex items-center space-x-2">
                               <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
                               <span className="text-sm">{provider}</span>
@@ -964,7 +1111,7 @@ const DocumentUpload = () => {
                       <div>
                         <h4 className="font-medium mb-3">Document Types ({chronologyData.documentTypes.length})</h4>
                         <div className="flex flex-wrap gap-2">
-                          {chronologyData.documentTypes.map((type, index) => (
+                          {chronologyData.documentTypes.map((type: string, index: number) => (
                             <Badge key={index} variant="outline" className="text-xs">
                               {type}
                             </Badge>
@@ -977,7 +1124,7 @@ const DocumentUpload = () => {
                     <div>
                       <h4 className="font-medium mb-3">Medical Timeline (First 10 Events)</h4>
                       <div className="space-y-3 max-h-96 overflow-y-auto">
-                        {chronologyData.timeline.slice(0, 10).map((entry, index) => (
+                        {chronologyData.timeline.slice(0, 10).map((entry: any, index: number) => (
                           <div key={index} className="flex space-x-4 p-3 bg-white border rounded-lg">
                             <div className="flex-shrink-0 w-24 text-sm text-gray-600">
                               {new Date(entry.date).toLocaleDateString()}
@@ -1032,7 +1179,7 @@ const DocumentUpload = () => {
                           // Export chronology as PDF/Word
                           const chronologyText = chronologyData.timeline
                             .map(
-                              (entry) =>
+                              (entry: any) =>
                                 `${new Date(entry.date).toLocaleDateString()}: ${entry.event} (${entry.provider})`,
                             )
                             .join("\n")
@@ -1285,6 +1432,7 @@ const DocumentUpload = () => {
               </div>
             )}
           </div>
+ <DocumentChatbot />
         </div>
       </div>
     </div>
