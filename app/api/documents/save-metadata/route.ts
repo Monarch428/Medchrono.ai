@@ -13,7 +13,10 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    console.log(`Saving metadata for: ${fileName} in case: ${caseId}`)
+    console.log(`Saving metadata for: ${fileName}`)
+    console.log(`  case_id: ${caseId}`)
+    console.log(`  storage_path: ${storagePath}`)
+    console.log(`  file_size: ${fileSize}`)
 
     // Save metadata to database
     const documentData = {

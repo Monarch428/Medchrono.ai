@@ -116,22 +116,40 @@ export function DocumentChatbot({ caseId }: DocumentChatbotProps) {
     // Auto-refresh on first message if not already done
     if (!hasRefreshed) {
       setIsLoading(true)
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: Date.now().toString(),
-          role: "assistant",
-          content: `🔄 Loading documents for this case... Please wait.`,
-          timestamp: new Date(),
-        },
-      ])
 
-      // Refresh documents first
-      await handleRefreshDocuments()
+      // Refresh documents silently (no message shown)
+      try {
+        const response = await fetch("/api/chat-assistant", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "refresh", case_id: caseId }),
+        })
+
+        const data = await response.json()
+
+        if (data.success) {
+          setHasRefreshed(true)
+          console.log("Documents loaded successfully")
+        } else {
+          throw new Error(data.details || "Failed to refresh documents")
+        }
+      } catch (error) {
+        console.error("Auto-refresh error:", error)
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: Date.now().toString(),
+            role: "assistant",
+            content: `❌ Failed to load documents: ${error instanceof Error ? error.message : "Unknown error"}. Please try clicking the refresh button.`,
+            timestamp: new Date(),
+          },
+        ])
+        setIsLoading(false)
+        return
+      }
+
       setIsLoading(false)
-
-      // Don't send the message yet, let user send again after refresh
-      return
+      // Continue to send the user's message
     }
 
     const userMessage: Message = {

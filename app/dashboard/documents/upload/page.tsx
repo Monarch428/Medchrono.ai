@@ -3,6 +3,7 @@
 import type React from "react"
 
 import { useState, useCallback, useEffect } from "react"
+import { useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -102,7 +103,10 @@ const processingSteps = [
 ]
 
 const DocumentUpload = () => {
-  const [selectedCase, setSelectedCase] = useState("")
+  const searchParams = useSearchParams()
+  const caseIdFromUrl = searchParams?.get("caseId") || ""
+
+  const [selectedCase, setSelectedCase] = useState(caseIdFromUrl)
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([])
   const [isDragOver, setIsDragOver] = useState(false)
   const [selectedFile, setSelectedFile] = useState<UploadedFile | null>(null)
@@ -112,6 +116,14 @@ const DocumentUpload = () => {
   const [storedCases, setStoredCases] = useState<any[]>([])
   const [isGeneratingChronology, setIsGeneratingChronology] = useState(false)
   const [chronologyData, setChronologyData] = useState<any>(null)
+
+  // Set case from URL on mount
+  useEffect(() => {
+    if (caseIdFromUrl) {
+      setSelectedCase(caseIdFromUrl)
+      console.log("📌 Case ID from URL:", caseIdFromUrl)
+    }
+  }, [caseIdFromUrl])
 
   // Load real cases from API instead of localStorage
   useEffect(() => {
@@ -450,6 +462,8 @@ const DocumentUpload = () => {
       )
 
       // Step 3: Save metadata to database
+      console.log("💾 Saving metadata with case_id:", selectedCase || "default")
+
       const metadataResponse = await fetch("/api/documents/save-metadata", {
         method: "POST",
         headers: {
