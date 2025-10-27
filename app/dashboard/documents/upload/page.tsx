@@ -1499,7 +1499,7 @@ const DocumentUpload = () => {
               </div>
             )}
           </div>
- <DocumentChatbot />
+          <DocumentChatbot caseId={selectedCase || undefined} />
         </div>
       </div>
     </div>

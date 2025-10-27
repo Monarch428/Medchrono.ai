@@ -14,7 +14,11 @@ interface Message {
   timestamp: Date
 }
 
-export function DocumentChatbot() {
+interface DocumentChatbotProps {
+  caseId?: string // The case ID for the current document/case
+}
+
+export function DocumentChatbot({ caseId }: DocumentChatbotProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -38,12 +42,25 @@ export function DocumentChatbot() {
   }, [messages])
 
   const handleRefreshDocuments = async () => {
+    if (!caseId) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now().toString(),
+          role: "assistant",
+          content: `❌ Please select a case first to use the chatbot.`,
+          timestamp: new Date(),
+        },
+      ])
+      return
+    }
+
     setIsRefreshing(true)
     try {
       const response = await fetch("/api/chat-assistant", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "refresh" }),
+        body: JSON.stringify({ action: "refresh", case_id: caseId }),
       })
 
       const data = await response.json()
@@ -81,6 +98,19 @@ export function DocumentChatbot() {
   const handleSendMessage = async () => {
     if (!input.trim() || isLoading) return
 
+    if (!caseId) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now().toString(),
+          role: "assistant",
+          content: `❌ Please select a case first to use the chatbot.`,
+          timestamp: new Date(),
+        },
+      ])
+      return
+    }
+
     const userMessage: Message = {
       id: Date.now().toString(),
       role: "user",
@@ -96,7 +126,7 @@ export function DocumentChatbot() {
       const response = await fetch("/api/chat-assistant", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: input.trim() }),
+        body: JSON.stringify({ question: input.trim(), case_id: caseId }),
       })
 
       const data = await response.json()

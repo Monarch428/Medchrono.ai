@@ -864,7 +864,7 @@ End of Report
       </div>
 
       {/* Document Chatbot - Floating component */}
-      <DocumentChatbot />
+      <DocumentChatbot caseId={selectedCase || undefined} />
     </div>
   )
 }
