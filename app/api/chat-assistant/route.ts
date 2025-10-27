@@ -5,7 +5,12 @@ const PYTHON_BACKEND_URL = process.env.PYTHON_BACKEND_URL || "http://localhost:8
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { question, action } = body
+    const { question, action, case_id } = body
+
+    // case_id is REQUIRED for all operations
+    if (!case_id) {
+      return NextResponse.json({ error: "case_id is required" }, { status: 400 })
+    }
 
     // Determine the endpoint based on action
     let endpoint = `${PYTHON_BACKEND_URL}/chat/`
@@ -20,6 +25,7 @@ export async function POST(request: NextRequest) {
         headers: {
           "Content-Type": "application/json",
         },
+        body: JSON.stringify({ case_id }),
       })
 
       if (!response.ok) {
@@ -42,13 +48,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Question is required" }, { status: 400 })
     }
 
-    // Forward request to Python backend
+    // Forward request to Python backend with case_id
     const response = await fetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({ question, case_id }),
     })
 
     if (!response.ok) {
