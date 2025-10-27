@@ -1,15 +1,11 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { supabaseAdmin } from "@/lib/supabase/server"
-import fs from "fs/promises"
-import path from "path"
 
 // Configure route to handle large files
 export const runtime = "nodejs"
 export const maxDuration = 300 // 5 minutes timeout
 
 export async function POST(request: NextRequest) {
-  const tempFiles: string[] = []
-
   try {
     const { documentIds } = await request.json()
 
@@ -22,11 +18,11 @@ export async function POST(request: NextRequest) {
 
     console.log(`Processing ${documentIds.length} documents in batch`)
 
-    // Create documents directory
-    const documentsDir = path.join(process.cwd(), "ai-backend", "app", "documents")
-    await fs.mkdir(documentsDir, { recursive: true })
+    // Prepare FormData with multiple files
+    const formData = new FormData()
+    const filePromises = []
 
-    // Download and save all documents to the folder
+    // Download and prepare all documents
     for (const documentId of documentIds) {
       try {
         // Get document from database
@@ -62,36 +58,26 @@ export async function POST(request: NextRequest) {
           continue // Skip this document
         }
 
-        // Save file temporarily
-        const sanitizedFilename = document.filename.replace(/[^a-zA-Z0-9.-]/g, "_")
-        const tempFilePath = path.join(documentsDir, sanitizedFilename)
-
+        // Add file to FormData
         const arrayBuffer = await fileData.arrayBuffer()
-        await fs.writeFile(tempFilePath, Buffer.from(arrayBuffer))
+        const buffer = Buffer.from(arrayBuffer)
+        const blob = new Blob([buffer], { type: document.file_type || "application/octet-stream" })
+        formData.append("files", blob, document.filename)
 
-        tempFiles.push(tempFilePath)
-        console.log("Saved temporary file:", tempFilePath)
+        console.log("Prepared file for upload:", document.filename)
       } catch (docError) {
         console.error(`Error processing document ${documentId}:`, docError)
         // Continue with other documents
       }
     }
 
-    if (tempFiles.length === 0) {
-      return NextResponse.json(
-        { error: "No documents could be downloaded and saved" },
-        { status: 500 }
-      )
-    }
-
-    console.log(`Successfully saved ${tempFiles.length} files, calling Python backend...`)
-
-    // Call Python backend /summarize endpoint
+    // Call Python backend /process-documents-batch endpoint
     const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || "http://localhost:8000"
-    console.log("Calling Python backend:", `${pythonBackendUrl}/summarize`)
+    console.log("Calling Python backend:", `${pythonBackendUrl}/process-documents-batch`)
 
-    const response = await fetch(`${pythonBackendUrl}/summarize`, {
-      method: "GET",
+    const response = await fetch(`${pythonBackendUrl}/process-documents-batch`, {
+      method: "POST",
+      body: formData,
     })
 
     if (!response.ok) {
@@ -100,19 +86,10 @@ export async function POST(request: NextRequest) {
     }
 
     const chronologyData = await response.json()
-    console.log("Python backend returned chronology data for", chronologyData?.data?.documents?.length, "documents")
-
-    // Clean up all temporary files
-    for (const tempFilePath of tempFiles) {
-      try {
-        await fs.unlink(tempFilePath)
-        console.log("Cleaned up temporary file:", tempFilePath)
-      } catch (cleanupError) {
-        console.warn("Failed to cleanup temp file:", cleanupError)
-      }
-    }
+    console.log("Python backend returned chronology data for batch")
 
     // Transform Python backend response
+    // New endpoint returns: { success: true, data: { documents: [...] } }
     const documents = chronologyData?.data?.documents || []
 
     if (documents.length === 0) {
@@ -166,15 +143,6 @@ export async function POST(request: NextRequest) {
     })
   } catch (error) {
     console.error("Batch chronology generation error:", error)
-
-    // Clean up temporary files on error
-    for (const tempFilePath of tempFiles) {
-      try {
-        await fs.unlink(tempFilePath)
-      } catch (cleanupError) {
-        console.warn("Failed to cleanup temp file on error:", cleanupError)
-      }
-    }
 
     return NextResponse.json(
       {

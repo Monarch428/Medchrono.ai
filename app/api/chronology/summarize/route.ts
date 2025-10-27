@@ -1,15 +1,11 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { supabaseAdmin } from "@/lib/supabase/server"
-import fs from "fs/promises"
-import path from "path"
 
 // Configure route to handle large files
 export const runtime = "nodejs"
 export const maxDuration = 300 // 5 minutes timeout
 
 export async function POST(request: NextRequest) {
-  let tempFilePath: string | null = null
-
   try {
     const { documentId } = await request.json()
 
@@ -58,25 +54,24 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Create temporary directory for Python backend to access
-    const documentsDir = path.join(process.cwd(), "ai-backend", "app", "documents")
-    await fs.mkdir(documentsDir, { recursive: true })
-
-    // Save file temporarily
-    const sanitizedFilename = document.filename.replace(/[^a-zA-Z0-9.-]/g, "_")
-    tempFilePath = path.join(documentsDir, sanitizedFilename)
-
+    // Prepare file for upload to Python backend
     const arrayBuffer = await fileData.arrayBuffer()
-    await fs.writeFile(tempFilePath, Buffer.from(arrayBuffer))
+    const buffer = Buffer.from(arrayBuffer)
 
-    console.log("Saved temporary file:", tempFilePath)
+    // Create FormData for file upload
+    const formData = new FormData()
+    const blob = new Blob([buffer], { type: document.file_type || "application/octet-stream" })
+    formData.append("file", blob, document.filename)
 
-    // Call Python backend /summarize endpoint
+    console.log("Uploading file to Python backend:", document.filename)
+
+    // Call Python backend /process-document endpoint with file upload
     const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || "http://localhost:8000"
-    console.log("Calling Python backend:", `${pythonBackendUrl}/summarize`)
+    console.log("Calling Python backend:", `${pythonBackendUrl}/process-document`)
 
-    const response = await fetch(`${pythonBackendUrl}/summarize`, {
-      method: "GET",
+    const response = await fetch(`${pythonBackendUrl}/process-document`, {
+      method: "POST",
+      body: formData,
     })
 
     if (!response.ok) {
@@ -87,29 +82,17 @@ export async function POST(request: NextRequest) {
     const chronologyData = await response.json()
     console.log("Python backend returned chronology data")
 
-    // Clean up temporary file
-    if (tempFilePath) {
-      try {
-        await fs.unlink(tempFilePath)
-        console.log("Cleaned up temporary file")
-      } catch (cleanupError) {
-        console.warn("Failed to cleanup temp file:", cleanupError)
-      }
-    }
-
     // Transform Python backend response to match expected format
-    // Python backend returns: { data: { documents: [...] } }
-    const documents = chronologyData?.data?.documents || []
-
-    if (documents.length === 0) {
+    // New endpoint returns: { success: true, data: {...} }
+    if (!chronologyData.success || !chronologyData.data) {
       return NextResponse.json(
         { error: "No chronology data generated", details: "Python backend returned empty results" },
         { status: 500 }
       )
     }
 
-    // Get the first document's analysis (assuming single file)
-    const analysis = documents[0]
+    // Get the document's analysis
+    const analysis = chronologyData.data
 
     // Map Python backend fields to our format
     const chronology = {
@@ -151,15 +134,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(chronology)
   } catch (error) {
     console.error("Chronology generation error:", error)
-
-    // Clean up temporary file on error
-    if (tempFilePath) {
-      try {
-        await fs.unlink(tempFilePath)
-      } catch (cleanupError) {
-        console.warn("Failed to cleanup temp file on error:", cleanupError)
-      }
-    }
 
     return NextResponse.json(
       {
