@@ -23,16 +23,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Case ID is required" }, { status: 400 })
     }
 
-    // Check file size (500MB limit for storage)
-    const MAX_FILE_SIZE = 500 * 1024 * 1024 // 500MB
-    if (file.size > MAX_FILE_SIZE) {
-      return NextResponse.json(
-        {
-          error: `File too large. Maximum size is ${MAX_FILE_SIZE / 1024 / 1024}MB.`,
-        },
-        { status: 413 },
-      )
-    }
+    // Note: This endpoint is now deprecated in favor of direct upload to Supabase
+    // Kept for backward compatibility only
+    // For large files (>100MB), use /api/documents/get-upload-url instead
 
     console.log(`Processing file: ${file.name} (${file.size} bytes) for case: ${caseId}`)
 

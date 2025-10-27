@@ -169,21 +169,51 @@ const DocumentUpload = () => {
   }, [])
 
   const handleFiles = (files: File[]) => {
-    const newFiles: UploadedFile[] = files.map((file, index) => ({
-      id: `file-${Date.now()}-${index}`,
-      name: file.name,
-      size: file.size,
-      type: file.type,
-      progress: 0,
-      status: "uploading",
-      processingStep: 0,
-      file, // Store the actual file for AI processing
-    }))
+    // With direct upload to Supabase, we can support much larger files
+    // Supabase free tier supports up to 50GB, but we'll limit to 2GB for practical reasons
+    const MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024 // 2GB limit
+
+    const newFiles: UploadedFile[] = files.map((file, index) => {
+      // Check file size
+      if (file.size > MAX_FILE_SIZE) {
+        return {
+          id: `file-${Date.now()}-${index}`,
+          name: file.name,
+          size: file.size,
+          type: file.type,
+          progress: 100,
+          status: "error" as const,
+          processingStep: 0,
+          error: `File too large! Maximum: 2GB, Your file: ${(file.size / 1024 / 1024 / 1024).toFixed(2)}GB. Please split the file.`,
+          qualityFlags: [
+            {
+              type: "processing_error" as any,
+              severity: "high" as const,
+              description: `File exceeds 2GB limit (${(file.size / 1024 / 1024 / 1024).toFixed(2)}GB)`,
+            },
+          ],
+        }
+      }
+
+      return {
+        id: `file-${Date.now()}-${index}`,
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        progress: 0,
+        status: "uploading" as const,
+        processingStep: 0,
+        file, // Store the actual file for AI processing
+      }
+    })
 
     setUploadedFiles((prev) => [...prev, ...newFiles])
 
+    // Only process files that are not too large
     newFiles.forEach((uploadedFile) => {
-      processFileWithAI(uploadedFile)
+      if (uploadedFile.status !== "error" && uploadedFile.file) {
+        processFileWithAI(uploadedFile)
+      }
     })
   }
 
@@ -363,47 +393,84 @@ const DocumentUpload = () => {
     }
 
     try {
-      console.log("Starting AI processing for:", uploadedFile.name)
+      console.log("Starting direct upload for:", uploadedFile.name)
 
       setUploadedFiles((prev) =>
         prev.map((f) =>
-          f.id === uploadedFile.id ? { ...f, progress: 20, status: "processing", processingStep: 1 } : f,
+          f.id === uploadedFile.id ? { ...f, progress: 10, status: "uploading", processingStep: 1 } : f,
         ),
       )
 
-      // Upload file to database
-      const uploadFormData = new FormData()
-      uploadFormData.append("file", uploadedFile.file)
-      uploadFormData.append("caseId", selectedCase || "default")
-
-      const uploadResponse = await fetch("/api/documents/upload", {
+      // Step 1: Get signed upload URL
+      const urlResponse = await fetch("/api/documents/get-upload-url", {
         method: "POST",
-        body: uploadFormData,
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          fileName: uploadedFile.file.name,
+          caseId: selectedCase || "default",
+          fileSize: uploadedFile.file.size,
+        }),
+      })
+
+      if (!urlResponse.ok) {
+        const errorData = await urlResponse.json()
+        throw new Error(errorData.error || "Failed to get upload URL")
+      }
+
+      const { signedUrl, path: storagePath } = await urlResponse.json()
+
+      setUploadedFiles((prev) =>
+        prev.map((f) =>
+          f.id === uploadedFile.id ? { ...f, progress: 20, processingStep: 1 } : f,
+        ),
+      )
+
+      // Step 2: Upload directly to Supabase Storage
+      console.log("Uploading directly to Supabase Storage...")
+      const uploadResponse = await fetch(signedUrl, {
+        method: "PUT",
+        body: uploadedFile.file,
+        headers: {
+          "Content-Type": uploadedFile.file.type || "application/octet-stream",
+        },
       })
 
       if (!uploadResponse.ok) {
-        let errorMessage = "Failed to upload document"
-        try {
-          const errorData = await uploadResponse.json()
-          errorMessage = errorData.error || errorData.details || errorMessage
-          console.error("Upload API error:", errorData)
-        } catch (parseError) {
-          // If response is not JSON, try to get text
-          try {
-            const errorText = await uploadResponse.text()
-            console.error("Upload API error (text):", errorText)
-            errorMessage = `Upload failed: ${uploadResponse.status} ${uploadResponse.statusText}`
-          } catch (textError) {
-            console.error("Could not parse error response:", textError)
-          }
-        }
-        throw new Error(errorMessage)
+        throw new Error(`Direct upload failed: ${uploadResponse.status} ${uploadResponse.statusText}`)
       }
 
-      const uploadResult = await uploadResponse.json()
-      const documentId = uploadResult.documentId
+      console.log("File uploaded to Supabase Storage successfully")
 
-      console.log("Document uploaded successfully with ID:", documentId)
+      setUploadedFiles((prev) =>
+        prev.map((f) =>
+          f.id === uploadedFile.id ? { ...f, progress: 40, processingStep: 2 } : f,
+        ),
+      )
+
+      // Step 3: Save metadata to database
+      const metadataResponse = await fetch("/api/documents/save-metadata", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          caseId: selectedCase || "default",
+          storagePath: storagePath,
+          fileName: uploadedFile.file.name,
+          fileSize: uploadedFile.file.size,
+          fileType: uploadedFile.file.type,
+        }),
+      })
+
+      if (!metadataResponse.ok) {
+        const errorData = await metadataResponse.json()
+        throw new Error(errorData.error || "Failed to save metadata")
+      }
+
+      const { documentId } = await metadataResponse.json()
+      console.log("Document metadata saved with ID:", documentId)
 
       setUploadedFiles((prev) =>
         prev.map((f) => (f.id === uploadedFile.id ? { ...f, progress: 40, processingStep: 2, documentId } : f)),
