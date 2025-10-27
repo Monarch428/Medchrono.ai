@@ -24,13 +24,14 @@ export function DocumentChatbot({ caseId }: DocumentChatbotProps) {
     {
       id: "welcome",
       role: "assistant",
-      content: "Hello! I'm your document assistant. Ask me anything about the uploaded medical documents.",
+      content: "Hello! I'm your document assistant. Ask me anything about the uploaded medical documents. I'll automatically load documents when you send your first message.",
       timestamp: new Date(),
     },
   ])
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [hasRefreshed, setHasRefreshed] = useState(false) // Track if we've loaded documents
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const scrollToBottom = () => {
@@ -66,6 +67,7 @@ export function DocumentChatbot({ caseId }: DocumentChatbotProps) {
       const data = await response.json()
 
       if (data.success) {
+        setHasRefreshed(true) // Mark as refreshed
         // Add system message
         setMessages((prev) => [
           ...prev,
@@ -108,6 +110,27 @@ export function DocumentChatbot({ caseId }: DocumentChatbotProps) {
           timestamp: new Date(),
         },
       ])
+      return
+    }
+
+    // Auto-refresh on first message if not already done
+    if (!hasRefreshed) {
+      setIsLoading(true)
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now().toString(),
+          role: "assistant",
+          content: `🔄 Loading documents for this case... Please wait.`,
+          timestamp: new Date(),
+        },
+      ])
+
+      // Refresh documents first
+      await handleRefreshDocuments()
+      setIsLoading(false)
+
+      // Don't send the message yet, let user send again after refresh
       return
     }
 
