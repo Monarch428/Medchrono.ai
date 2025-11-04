@@ -26,41 +26,10 @@ const DEFAULT_SUGGESTIONS = [
 function extractMessageText(payload: unknown): string {
   if (!payload) return "I wasn't able to understand the response."
 
-  if (typeof payload === "string") {
-    return payload
-  }
-
-  if (Array.isArray(payload)) {
-    return payload
-      .map((item) => (typeof item === "string" ? item : JSON.stringify(item)))
-      .join("\n\n")
-  }
+  if (typeof payload === "string") return payload
 
   const data = payload as Record<string, unknown>
-  const candidateKeys = [
-    "response",
-    "message",
-    "answer",
-    "question",
-    "reply",
-    "output",
-    "text",
-  ]
-
-  for (const key of candidateKeys) {
-    const value = data[key]
-    if (typeof value === "string" && value.trim()) {
-      return value
-    }
-    if (Array.isArray(value)) {
-      const formatted = value
-        .map((item) => (typeof item === "string" ? item : JSON.stringify(item)))
-        .join("\n\n")
-      if (formatted.trim()) {
-        return formatted
-      }
-    }
-  }
+  if (typeof data.bot_reply === "string") return data.bot_reply
 
   return JSON.stringify(payload, null, 2)
 }
@@ -134,10 +103,15 @@ export function IntakeChatbot() {
       const response = await fetch("/api/intake", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        // body: JSON.stringify({
+        //   message: messageToSend,
+        //   history: conversationHistory,
+        // }),
         body: JSON.stringify({
-          message: messageToSend,
-          history: conversationHistory,
-        }),
+        user_message: messageToSend,
+        // session_id: optionalSessionId, // add later if needed
+      }),
+
       })
 
       const text = await response.text()

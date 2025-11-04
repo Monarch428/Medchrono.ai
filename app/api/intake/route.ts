@@ -1,14 +1,17 @@
 import { type NextRequest, NextResponse } from "next/server"
 
-const INTAKE_API_URL = process.env.INTAKE_API_URL
-
 export const dynamic = "force-dynamic"
+
+
+const PYTHON_BACKEND_URL = process.env.PYTHON_BACKEND_URL || "http://localhost:8000"
+
+let INTAKE_API_URL =  `${PYTHON_BACKEND_URL}/intake/respond`
 
 export async function POST(request: NextRequest) {
   if (!INTAKE_API_URL) {
     return NextResponse.json(
       { error: "Intake AI service is not configured.", details: "Missing INTAKE_API_URL environment variable." },
-      { status: 500 },
+      { status: 500 }
     )
   }
 
@@ -21,7 +24,7 @@ export async function POST(request: NextRequest) {
         error: "Invalid JSON payload.",
         details: error instanceof Error ? error.message : "Unable to parse request body as JSON.",
       },
-      { status: 400 },
+      { status: 400 }
     )
   }
 
@@ -52,10 +55,11 @@ export async function POST(request: NextRequest) {
           status: upstreamResponse.status,
           details: data,
         },
-        { status: upstreamResponse.status },
+        { status: upstreamResponse.status }
       )
     }
 
+    // Handle empty or string responses
     if (data === null || data === "") {
       return NextResponse.json({ message: "" })
     }
@@ -72,7 +76,7 @@ export async function POST(request: NextRequest) {
         error: "Unable to contact the intake service.",
         details: error instanceof Error ? error.message : "Unknown error occurred.",
       },
-      { status: 502 },
+      { status: 502 }
     )
   }
 }
