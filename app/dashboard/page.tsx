@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Progress } from "@/components/ui/progress"
+import IntakeChatbot from "@/components/IntakeChatbot"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -78,6 +79,13 @@ interface CaseData {
   lastActivity: string
   createdAt: string
 }
+
+const CASE_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "2-digit",
+  year: "numeric",
+  timeZone: "UTC",
+})
 
 export default function DashboardPage() {
   const [filterOpen, setFilterOpen] = useState(false)
@@ -470,6 +478,8 @@ export default function DashboardPage() {
               </CardContent>
             </Card>
 
+            <IntakeChatbot />
+
             {/* Main Content Grid */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               {/* Active Cases */}
@@ -575,7 +585,7 @@ export default function DashboardPage() {
                               <p className="text-sm text-gray-900">
                                 Case <span className="font-medium">{case_.name}</span> was created
                               </p>
-                              <p className="text-xs text-gray-500">{new Date(case_.createdAt).toLocaleDateString()}</p>
+                              <p className="text-xs text-gray-500">{CASE_DATE_FORMATTER.format(new Date(case_.createdAt))}</p>
                             </div>
                           </div>
                         ))}
