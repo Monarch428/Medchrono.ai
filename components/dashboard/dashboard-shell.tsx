@@ -261,10 +261,18 @@ export default function DashboardShell({ children, user, profile }: DashboardShe
                 <SidebarMenu>
                   {navigationItems.map((item) => {
                     const Icon = item.icon
-                    const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`)
+                    const isActive =
+                      item.href === "/dashboard"
+                        ? pathname === "/dashboard" // active only on the main dashboard
+                        : pathname === item.href || pathname.startsWith(`${item.href}/`)
+
                     return (
                       <SidebarMenuItem key={item.title}>
-                        <SidebarMenuButton asChild isActive={isActive} className={isActive ? "bg-cyan-50 text-cyan-700 border-r-2 border-cyan-600" : ""}>
+                        <SidebarMenuButton
+                          asChild
+                          isActive={isActive}
+                          className={isActive ? "bg-cyan-50 text-cyan-700 border-r-2 border-cyan-600" : ""}
+                        >
                           <Link href={item.href}>
                             <Icon className="w-4 h-4" />
                             <span>{item.title}</span>

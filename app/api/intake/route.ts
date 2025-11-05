@@ -3,80 +3,47 @@ import { type NextRequest, NextResponse } from "next/server"
 export const dynamic = "force-dynamic"
 
 
-const PYTHON_BACKEND_URL = process.env.PYTHON_BACKEND_URL || "http://localhost:8000"
+// const PYTHON_BACKEND_URL = process.env.PYTHON_BACKEND_URL || "http://localhost:8000"
 
-let INTAKE_API_URL =  `${PYTHON_BACKEND_URL}/intake/respond`
+// let INTAKE_API_URL =  `${PYTHON_BACKEND_URL}/intake/respond`
 
 export async function POST(request: NextRequest) {
-  if (!INTAKE_API_URL) {
-    return NextResponse.json(
-      { error: "Intake AI service is not configured.", details: "Missing INTAKE_API_URL environment variable." },
-      { status: 500 }
-    )
-  }
+  const PYTHON_BACKEND_URL = process.env.PYTHON_BACKEND_URL || "http://localhost:8000"
+  const INTAKE_API_URL = `${PYTHON_BACKEND_URL}/intake/respond`
 
-  let payload: unknown
+  let payload
   try {
-    payload = await request.json()
+    const body = await request.json()
+    // 🔥 Ensure body.message maps to user_message (as FastAPI expects)
+    payload = {
+      user_message: body.message || body.user_message,
+      session_id: body.session_id || null,
+    }
   } catch (error) {
-    return NextResponse.json(
-      {
-        error: "Invalid JSON payload.",
-        details: error instanceof Error ? error.message : "Unable to parse request body as JSON.",
-      },
-      { status: 400 }
-    )
+    return NextResponse.json({ error: "Invalid JSON payload" }, { status: 400 })
   }
 
+  console.log("➡️ Sending payload to backend:", payload)
+
+  const upstreamResponse = await fetch(INTAKE_API_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  })
+
+  const text = await upstreamResponse.text()
+  let data
   try {
-    const upstreamResponse = await fetch(INTAKE_API_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify(payload ?? {}),
-      next: { revalidate: 0 },
-    })
-
-    const text = await upstreamResponse.text()
-    let data: unknown = null
-
-    try {
-      data = text ? JSON.parse(text) : null
-    } catch {
-      data = text
-    }
-
-    if (!upstreamResponse.ok) {
-      return NextResponse.json(
-        {
-          error: "Failed to retrieve a response from the intake service.",
-          status: upstreamResponse.status,
-          details: data,
-        },
-        { status: upstreamResponse.status }
-      )
-    }
-
-    // Handle empty or string responses
-    if (data === null || data === "") {
-      return NextResponse.json({ message: "" })
-    }
-
-    if (typeof data === "string") {
-      return NextResponse.json({ message: data })
-    }
-
-    return NextResponse.json(data)
-  } catch (error) {
-    console.error("Intake API proxy error:", error)
-    return NextResponse.json(
-      {
-        error: "Unable to contact the intake service.",
-        details: error instanceof Error ? error.message : "Unknown error occurred.",
-      },
-      { status: 502 }
-    )
+    data = JSON.parse(text)
+  } catch {
+    data = text
   }
+
+  if (!upstreamResponse.ok) {
+    console.error("❌ Backend error:", data)
+    return NextResponse.json({ error: "Backend rejected request", details: data }, { status: upstreamResponse.status })
+  }
+
+  return NextResponse.json(data)
 }
+
