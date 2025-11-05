@@ -13,6 +13,7 @@ import {
   Filter,
   FolderOpen,
   MessageCircle,
+  Search,
   Plus,
 } from "lucide-react"
 
@@ -22,7 +23,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Progress } from "@/components/ui/progress"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Input } from "@/components/ui/input"
 import { createClient } from "@/lib/supabase/client"
+import { DashboardChatWidget } from "@/components/dashboard/chat-widget"
 
 interface CaseRecord {
   id: string
@@ -52,14 +55,6 @@ interface DocumentRecord {
   confidence_score?: number | null
   created_at?: string | null
   case_id?: string | null
-}
-
-interface DashboardNotification {
-  id: string
-  title: string
-  description: string
-  createdAt: string
-  type: "case" | "document"
 }
 
 const CASE_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
@@ -131,30 +126,6 @@ const filterCases = (cases: CaseRecord[], filter: string) => {
   }
 }
 
-const buildNotifications = (caseRecords: CaseRecord[], documents: DocumentRecord[]): DashboardNotification[] => {
-  const caseNotifications: DashboardNotification[] = caseRecords.slice(0, 4).map((caseItem) => ({
-    id: `case-${caseItem.id}`,
-    title: caseItem.case_name ?? "Case update",
-    description: `${parseStatus(caseItem)} • ${parsePriority(caseItem)}`,
-    createdAt: caseItem.updated_at ?? caseItem.last_activity ?? caseItem.created_at ?? new Date().toISOString(),
-    type: "case",
-  }))
-
-  const documentNotifications: DashboardNotification[] = documents.slice(0, 4).map((document) => ({
-    id: `doc-${document.id}`,
-    title: document.document_name ?? document.original_filename ?? "Document uploaded",
-    description: `${document.category ?? document.document_category ?? "Uncategorized"} • ${
-      document.processing_status ?? document.status ?? "Processing"
-    }`,
-    createdAt: document.created_at ?? new Date().toISOString(),
-    type: "document",
-  }))
-
-  return [...caseNotifications, ...documentNotifications].sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-  )
-}
-
 const getPriorityBadgeVariant = (priority: string) => {
   const normalized = priority.toLowerCase()
   if (normalized === "high") return "bg-red-100 text-red-700"
@@ -177,11 +148,11 @@ export default function DashboardPage() {
   const supabase = useMemo(() => createClient(), [])
   const [cases, setCases] = useState<CaseRecord[]>([])
   const [documents, setDocuments] = useState<DocumentRecord[]>([])
-  const [notifications, setNotifications] = useState<DashboardNotification[]>([])
   const [selectedFilter, setSelectedFilter] = useState<string>(filterOptions[0])
   const [filterOpen, setFilterOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [attorneyName, setAttorneyName] = useState<string | null>(null)
+  const [caseSearch, setCaseSearch] = useState("")
 
   useEffect(() => {
     let isMounted = true
@@ -205,7 +176,6 @@ export default function DashboardPage() {
         if (isMounted) {
           setCases(caseData ?? [])
           setDocuments(documentData ?? [])
-          setNotifications(buildNotifications(caseData ?? [], documentData ?? []))
         }
 
         const {
@@ -253,10 +223,23 @@ export default function DashboardPage() {
 
   const documentCount = documents.length
 
-  const filteredCases = filterCases(cases, selectedFilter)
+  const filteredCases = filterCases(cases, selectedFilter).filter((caseItem) => {
+    if (!caseSearch.trim()) return true
+    const query = caseSearch.toLowerCase()
+    const haystacks = [
+      caseItem.case_name,
+      caseItem.client_name,
+      caseItem.assigned_attorney,
+      caseItem.case_status,
+      caseItem.priority_level,
+    ]
+      .filter((value): value is string => Boolean(value))
+      .map((value) => value.toLowerCase())
+
+    return haystacks.some((value) => value.includes(query))
+  })
   const visibleCases = filteredCases.slice(0, 5)
-  const latestDocuments = documents.slice(0, 5)
-  const latestNotifications = notifications.slice(0, 6)
+  const latestDocuments = documents.slice(0, 3)
 
   const firstName = attorneyName ? attorneyName.split(" ")[0] : "there"
 
@@ -429,19 +412,30 @@ export default function DashboardPage() {
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-        <Card className="border-0 shadow-sm xl:col-span-2">
-          <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[2fr_1fr]">
+        <Card className="border-0 shadow-sm">
+          <CardHeader className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <CardTitle>Active cases</CardTitle>
               <CardDescription>Track progress and status across your matters</CardDescription>
             </div>
-            <Button variant="ghost" size="sm" asChild>
-              <Link href="/dashboard/cases">
-                View all cases
-                <ArrowUpRight className="ml-2 h-4 w-4" />
-              </Link>
-            </Button>
+            <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
+              <div className="relative w-full sm:w-64">
+                <Input
+                  placeholder="Search cases or clients"
+                  value={caseSearch}
+                  onChange={(event) => setCaseSearch(event.target.value)}
+                  className="pl-10"
+                />
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+              </div>
+              <Button variant="ghost" size="sm" asChild>
+                <Link href="/dashboard/cases">
+                  View all cases
+                  <ArrowUpRight className="ml-2 h-4 w-4" />
+                </Link>
+              </Button>
+            </div>
           </CardHeader>
           <CardContent className="px-0">
             {visibleCases.length === 0 ? (
@@ -507,144 +501,63 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card className="border-0 shadow-sm">
-          <CardHeader>
-            <CardTitle>Latest document activity</CardTitle>
-            <CardDescription>Recent uploads and processing updates</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {latestDocuments.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-gray-200 p-6 text-center text-sm text-gray-500">
-                No documents processed yet. Upload your first record to start generating chronologies.
-              </div>
-            ) : (
-              latestDocuments.map((document) => {
-                const status = document.processing_status ?? document.status ?? "Pending"
-                const category = document.category ?? document.document_category ?? "Uncategorized"
-                const confidence =
-                  typeof document.confidence === "number"
-                    ? document.confidence
-                    : typeof document.confidence_score === "number"
-                      ? document.confidence_score
-                      : null
+        <div className="space-y-6">
+          <Card className="border-0 shadow-sm">
+            <CardHeader>
+              <CardTitle>Latest document activity</CardTitle>
+              <CardDescription>Recent uploads and processing updates</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {latestDocuments.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-gray-200 p-6 text-center text-sm text-gray-500">
+                  No documents processed yet. Upload your first record to start generating chronologies.
+                </div>
+              ) : (
+                latestDocuments.map((document) => {
+                  const status = document.processing_status ?? document.status ?? "Pending"
+                  const category = document.category ?? document.document_category ?? "Uncategorized"
+                  const confidence =
+                    typeof document.confidence === "number"
+                      ? document.confidence
+                      : typeof document.confidence_score === "number"
+                        ? document.confidence_score
+                        : null
 
-                return (
-                  <div key={document.id} className="rounded-lg border border-gray-100 p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-medium text-gray-900">
-                          {document.document_name ?? document.original_filename ?? "Document"}
-                        </p>
-                        <p className="text-xs text-gray-500">
-                          {category} • Uploaded {document.created_at ? formatRelative(document.created_at) : "recently"}
-                        </p>
+                  return (
+                    <div key={document.id} className="rounded-lg border border-gray-100 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">
+                            {document.document_name ?? document.original_filename ?? "Document"}
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            {category} • Uploaded {document.created_at ? formatRelative(document.created_at) : "recently"}
+                          </p>
+                        </div>
+                        <Badge className="bg-cyan-50 text-cyan-700">{status}</Badge>
                       </div>
-                      <Badge className="bg-cyan-50 text-cyan-700">{status}</Badge>
+                      {confidence !== null && (
+                        <div className="mt-2 text-xs text-gray-500">AI confidence: {confidence.toFixed(0)}%</div>
+                      )}
+                      <div className="mt-3 flex items-center gap-2">
+                        <Button variant="ghost" size="sm" asChild>
+                          <Link href={`/dashboard/documents/${document.id}`}>
+                            <Eye className="mr-2 h-4 w-4" /> View
+                          </Link>
+                        </Button>
+                        <Button variant="ghost" size="sm">
+                          <Download className="mr-2 h-4 w-4" /> Export
+                        </Button>
+                      </div>
                     </div>
-                    {confidence !== null && (
-                      <div className="mt-2 text-xs text-gray-500">AI confidence: {confidence.toFixed(0)}%</div>
-                    )}
-                    <div className="mt-3 flex items-center gap-2">
-                      <Button variant="ghost" size="sm" asChild>
-                        <Link href={`/dashboard/documents/${document.id}`}>
-                          <Eye className="mr-2 h-4 w-4" /> View
-                        </Link>
-                      </Button>
-                      <Button variant="ghost" size="sm">
-                        <Download className="mr-2 h-4 w-4" /> Export
-                      </Button>
-                    </div>
-                  </div>
-                )
-              })
-            )}
-          </CardContent>
-        </Card>
-      </div>
+                  )
+                })
+              )}
+            </CardContent>
+          </Card>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <Card className="border-0 shadow-sm">
-          <CardHeader>
-            <CardTitle>Notifications & timeline</CardTitle>
-            <CardDescription>Latest updates across cases and documents</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {latestNotifications.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-gray-200 p-6 text-center text-sm text-gray-500">
-                You're all caught up. Updates from your team and AI automations will appear here.
-              </div>
-            ) : (
-              latestNotifications.map((item) => (
-                <div key={item.id} className="flex items-start gap-3">
-                  <div className={`mt-1 h-2.5 w-2.5 rounded-full ${item.type === "case" ? "bg-cyan-600" : "bg-emerald-500"}`} />
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm font-medium text-gray-900">{item.title}</p>
-                      <Badge variant="outline" className="border-transparent bg-gray-100 text-gray-600">
-                        {item.type === "case" ? "Case" : "Document"}
-                      </Badge>
-                    </div>
-                    <p className="text-xs text-gray-500">{item.description}</p>
-                    <p className="text-xs text-gray-400">{formatRelative(item.createdAt)}</p>
-                  </div>
-                </div>
-              ))
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className="border-0 shadow-sm">
-          <CardHeader>
-            <CardTitle>Next actions</CardTitle>
-            <CardDescription>Recommendations based on current progress</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="rounded-lg border border-gray-100 p-4">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="font-medium text-gray-900">Generate chronology drafts</p>
-                  <p className="text-xs text-gray-500">{documentCount} documents ready for chronology output</p>
-                </div>
-                <Button variant="outline" size="sm" asChild>
-                  <Link href="/dashboard/templates">
-                    Start
-                    <ArrowUpRight className="ml-1 h-4 w-4" />
-                  </Link>
-                </Button>
-              </div>
-            </div>
-
-            <div className="rounded-lg border border-gray-100 p-4">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="font-medium text-gray-900">Review high-priority cases</p>
-                  <p className="text-xs text-gray-500">{highPriorityCases} cases marked high priority</p>
-                </div>
-                <Button variant="outline" size="sm" asChild>
-                  <Link href="/dashboard/cases?filter=high">
-                    Review
-                    <ArrowUpRight className="ml-1 h-4 w-4" />
-                  </Link>
-                </Button>
-              </div>
-            </div>
-
-            <div className="rounded-lg border border-gray-100 p-4">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="font-medium text-gray-900">Ask the AI for insights</p>
-                  <p className="text-xs text-gray-500">Use the assistant to summarize new medical records</p>
-                </div>
-                <Button variant="outline" size="sm" asChild>
-                  <Link href="/dashboard/chat">
-                    Chat
-                    <ArrowUpRight className="ml-1 h-4 w-4" />
-                  </Link>
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+          <DashboardChatWidget />
+        </div>
       </div>
     </div>
   )
