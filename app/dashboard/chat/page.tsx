@@ -1,7 +1,6 @@
 "use client"
 
 import type React from "react"
-
 import { useState, useRef, useEffect, useMemo } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -48,6 +47,7 @@ export default function ChatPage() {
   const [cases, setCases] = useState<CaseData[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
+  // 🧠 Load cases from Supabase
   useEffect(() => {
     let isMounted = true
 
@@ -58,9 +58,7 @@ export default function ChatPage() {
           .select("id, case_name, client_name")
           .order("created_at", { ascending: false })
 
-        if (error) {
-          throw error
-        }
+        if (error) throw error
 
         if (isMounted) {
           const normalized = (data ?? []).map((caseItem) => ({
@@ -79,16 +77,85 @@ export default function ChatPage() {
 
     const channel = supabase
       .channel("chat-cases-updates")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "cases" },
-        () => {
-          void loadCases()
-        },
-      )
+      .on("postgres_changes", { event: "*", schema: "public", table: "cases" }, () => {
+        void loadCases()
+      })
       .subscribe()
 
-    return (
+    return () => {
+      isMounted = false
+      supabase.removeChannel(channel)
+    }
+  }, [supabase])
+
+  // ✉️ Scroll to bottom whenever messages update
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+  }, [messages])
+
+  // ⌨️ Handle Enter key press
+  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault()
+      handleSendMessage()
+    }
+  }
+
+  // 🚀 Handle sending messages
+  const handleSendMessage = async () => {
+    const trimmed = inputMessage.trim()
+    if (!trimmed) return
+
+    const newMessage: Message = {
+      id: crypto.randomUUID(),
+      content: trimmed,
+      role: "user",
+      timestamp: new Date(),
+    }
+
+    setMessages((prev) => [...prev, newMessage])
+    setInputMessage("")
+    setIsLoading(true)
+
+    try {
+      const res = await fetch("/api/intake/respond", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: trimmed,
+          caseId: selectedCase === "all" ? null : selectedCase,
+        }),
+      })
+
+      const data = await res.json()
+
+      const aiMessage: Message = {
+        id: crypto.randomUUID(),
+        content: data.reply ?? "I'm not sure about that, could you clarify?",
+        role: "assistant",
+        timestamp: new Date(),
+        sources: data.sources ?? [],
+      }
+
+      setMessages((prev) => [...prev, aiMessage])
+    } catch (error) {
+      console.error("Error sending message:", error)
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          content: "⚠️ Sorry, something went wrong. Please try again.",
+          role: "assistant",
+          timestamp: new Date(),
+        },
+      ])
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  // 🧩 UI
+  return (
     <div className="space-y-6">
       <div className="rounded-lg border bg-white p-4 shadow-sm">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">

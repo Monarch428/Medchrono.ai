@@ -53,3 +53,13 @@ CREATE POLICY "Users can insert own firm" ON firm_profiles FOR INSERT WITH CHECK
 CREATE POLICY "Users can view own notifications" ON notification_preferences FOR SELECT USING (auth.uid() = user_id);
 CREATE POLICY "Users can update own notifications" ON notification_preferences FOR UPDATE USING (auth.uid() = user_id);
 CREATE POLICY "Users can insert own notifications" ON notification_preferences FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+ALTER TABLE user_profiles
+ADD COLUMN bar_number TEXT,
+ADD COLUMN attorney_name TEXT,
+ADD COLUMN case_volume TEXT,
+ADD COLUMN firm_size TEXT,
+ADD COLUMN marketing_opt_in BOOLEAN DEFAULT false,
+ADD COLUMN hipaa_agreed BOOLEAN DEFAULT false,
+ADD COLUMN dpa_agreed BOOLEAN DEFAULT false;
+ADD COLUMN full_name TEXT;
