@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import type { User } from "@supabase/supabase-js"
@@ -12,6 +12,7 @@ import {
   FileText,
   FolderOpen,
   Home,
+  LifeBuoy,
   MessageCircle,
   Plus,
   Search,
@@ -22,7 +23,14 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import {
   Sidebar,
@@ -46,8 +54,11 @@ const navigationItems = [
   { title: "AI Assistant", icon: MessageCircle, href: "/dashboard/chat" },
   { title: "Chronology Templates", icon: Clock, href: "/dashboard/templates" },
   { title: "Analytics & Reports", icon: BarChart3, href: "/dashboard/analytics" },
+  { title: "Support", icon: LifeBuoy, href: "/dashboard/support" },
   { title: "Settings & Billing", icon: Settings, href: "/dashboard/settings" },
 ]
+
+const DISMISSED_NOTIFICATIONS_KEY = "medchrono_dismissed_notifications"
 
 interface NotificationRecord {
   id: string
@@ -79,9 +90,48 @@ export default function DashboardShell({ children, user, profile }: DashboardShe
   const supabase = useMemo(() => createClient(), [])
   const [notifications, setNotifications] = useState<NotificationRecord[]>([])
   const [isLoadingNotifications, setIsLoadingNotifications] = useState(false)
+  const [dismissedNotificationIds, setDismissedNotificationIds] = useState<string[]>([])
+  const dismissedNotificationsRef = useRef<string[]>([])
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    try {
+      const stored = window.localStorage.getItem(DISMISSED_NOTIFICATIONS_KEY)
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        if (Array.isArray(parsed)) {
+          setDismissedNotificationIds(parsed.filter((item): item is string => typeof item === "string"))
+        }
+      }
+    } catch (error) {
+      console.warn("Unable to read dismissed notifications from storage:", error)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    try {
+      window.localStorage.setItem(DISMISSED_NOTIFICATIONS_KEY, JSON.stringify(dismissedNotificationIds))
+    } catch (error) {
+      console.warn("Unable to persist dismissed notifications:", error)
+    }
+  }, [dismissedNotificationIds])
+
+  useEffect(() => {
+    dismissedNotificationsRef.current = dismissedNotificationIds
+  }, [dismissedNotificationIds])
+
+  useEffect(() => {
+    setNotifications((current) =>
+      current.filter((item) => !dismissedNotificationIds.includes(item.id)),
+    )
+  }, [dismissedNotificationIds])
 
   useEffect(() => {
     let isMounted = true
+
+    const filterDismissed = (records: NotificationRecord[] | null | undefined) =>
+      (records ?? []).filter((item) => !dismissedNotificationsRef.current.includes(item.id))
 
     const loadNotifications = async () => {
       setIsLoadingNotifications(true)
@@ -97,10 +147,14 @@ export default function DashboardShell({ children, user, profile }: DashboardShe
         }
 
         if (isMounted) {
-          setNotifications(data ?? [])
+          setNotifications(filterDismissed(data))
         }
       } catch (error) {
-        console.warn("Falling back to derived notifications:", error)
+        const errorCode = (error as { code?: string }).code
+        const errorMessage = (error as { message?: string }).message ?? ""
+        if (errorCode !== "PGRST205" && !errorMessage.includes("notifications")) {
+          console.warn("Falling back to derived notifications:", error)
+        }
         try {
           const { data: cases } = await supabase
             .from("cases")
@@ -116,7 +170,7 @@ export default function DashboardShell({ children, user, profile }: DashboardShe
               created_at: caseItem.updated_at ?? caseItem.created_at ?? new Date().toISOString(),
               read: false,
             }))
-            setNotifications(derived)
+            setNotifications(filterDismissed(derived))
           }
         } catch (fallbackError) {
           console.error("Unable to derive notifications:", fallbackError)
@@ -153,6 +207,38 @@ export default function DashboardShell({ children, user, profile }: DashboardShe
   const handleSignOut = async () => {
     await supabase.auth.signOut()
     router.replace("/login")
+  }
+
+  const dismissNotification = (id: string) => {
+    setDismissedNotificationIds((prev) => (prev.includes(id) ? prev : [...prev, id]))
+  }
+
+  const handleNotificationSelect = (notification: NotificationRecord) => {
+    dismissNotification(notification.id)
+
+    if (notification.id.startsWith("case-")) {
+      const caseId = notification.id.replace("case-", "")
+      void router.push(`/dashboard/cases/${caseId}`)
+      return
+    }
+
+    if (notification.id.startsWith("doc-")) {
+      const documentId = notification.id.replace("doc-", "")
+      void router.push(`/dashboard/documents/${documentId}`)
+      return
+    }
+
+    const description = notification.description?.toLowerCase() ?? ""
+    if (description.includes("document")) {
+      void router.push("/dashboard/documents")
+    } else {
+      void router.push("/dashboard/cases")
+    }
+  }
+
+  const handleClearNotifications = () => {
+    setDismissedNotificationIds((prev) => [...new Set([...prev, ...notifications.map((item) => item.id)])])
+    setNotifications([])
   }
 
   const unreadCount = getNotificationCount(notifications)
@@ -226,15 +312,31 @@ export default function DashboardShell({ children, user, profile }: DashboardShe
                     {notifications.length === 0 ? (
                       <DropdownMenuItem disabled>No notifications yet</DropdownMenuItem>
                     ) : (
-                      notifications.map((notification) => (
-                        <DropdownMenuItem key={notification.id} className="flex flex-col items-start space-y-1">
-                          <span className="text-sm font-medium text-gray-900">{notification.title}</span>
-                          <span className="text-xs text-gray-600">{notification.description}</span>
-                          <span className="text-xs text-gray-400">
-                            {formatDistanceToNow(new Date(notification.created_at), { addSuffix: true })}
-                          </span>
+                      <>
+                        {notifications.map((notification) => (
+                          <DropdownMenuItem
+                            key={notification.id}
+                            className="flex flex-col items-start space-y-1"
+                            onSelect={(event) => {
+                              event.preventDefault()
+                              handleNotificationSelect(notification)
+                            }}
+                          >
+                            <span className="text-sm font-medium text-gray-900">{notification.title}</span>
+                            <span className="text-xs text-gray-600">{notification.description}</span>
+                            <span className="text-xs text-gray-400">
+                              {formatDistanceToNow(new Date(notification.created_at), { addSuffix: true })}
+                            </span>
+                          </DropdownMenuItem>
+                        ))}
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem className="justify-center text-xs text-gray-600" onSelect={(event) => {
+                          event.preventDefault()
+                          handleClearNotifications()
+                        }}>
+                          Clear all notifications
                         </DropdownMenuItem>
-                      ))
+                      </>
                     )}
                   </DropdownMenuContent>
                 </DropdownMenu>

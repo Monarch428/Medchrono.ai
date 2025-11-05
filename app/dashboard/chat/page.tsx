@@ -117,7 +117,11 @@ export default function ChatPage() {
     setInputMessage("")
     setIsLoading(true)
 
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 45000)
+
     try {
+      
       const res = await fetch("/api/intake/respond", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -125,13 +129,28 @@ export default function ChatPage() {
           message: trimmed,
           caseId: selectedCase === "all" ? null : selectedCase,
         }),
+        signal: controller.signal,
       })
 
+      if (!res.ok) {
+        const errorPayload = await res.json().catch(() => null)
+        const message =
+          (errorPayload && (errorPayload.error ?? errorPayload.message)) ||
+          `Request failed with status ${res.status}`
+        throw new Error(message)
+      }
+
       const data = await res.json()
+      const replyText =
+        data.reply ??
+        data.message ??
+        data.bot_reply ??
+        data.response ??
+        "I'm not sure about that, could you clarify?"
 
       const aiMessage: Message = {
         id: crypto.randomUUID(),
-        content: data.reply ?? "I'm not sure about that, could you clarify?",
+        content: typeof replyText === "string" ? replyText : JSON.stringify(replyText),
         role: "assistant",
         timestamp: new Date(),
         sources: data.sources ?? [],
@@ -140,16 +159,23 @@ export default function ChatPage() {
       setMessages((prev) => [...prev, aiMessage])
     } catch (error) {
       console.error("Error sending message:", error)
+      const errorMessage =
+        error instanceof Error
+          ? error.name === "AbortError"
+            ? "⚠️ The intake service took too long to respond. Please try again."
+            : `⚠️ Sorry, something went wrong. ${error.message}`
+          : "⚠️ Sorry, something went wrong. Please try again."
       setMessages((prev) => [
         ...prev,
         {
           id: crypto.randomUUID(),
-          content: "⚠️ Sorry, something went wrong. Please try again.",
+          content: errorMessage,
           role: "assistant",
           timestamp: new Date(),
         },
       ])
     } finally {
+      clearTimeout(timeout)
       setIsLoading(false)
     }
   }

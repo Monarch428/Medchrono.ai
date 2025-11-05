@@ -9,11 +9,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { createClient } from "@/lib/supabase/client"
 import {
   Activity,
   FileText,
-  Filter,
   Home,
   ImageIcon,
   Pill,
@@ -53,6 +53,7 @@ interface DocumentRecord {
   updated_at?: string | null
   case_id?: string | null
   case_name?: string | null
+  case_client?: string | null
   provider?: string | null
   file_type?: string | null
   file_size?: number | null
@@ -136,6 +137,9 @@ export default function DocumentsPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
+  const [caseLookup, setCaseLookup] = useState<Record<string, { name: string | null; client: string | null }>>({})
+  const [caseFilter, setCaseFilter] = useState("all")
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
   useEffect(() => {
     let isMounted = true
@@ -143,18 +147,57 @@ export default function DocumentsPage() {
     const loadDocuments = async () => {
       setLoading(true)
       try {
-        const { data, error } = await supabase.from("documents").select("*").order("created_at", { ascending: false })
+        setErrorMessage(null)
+        const { data, error } = await supabase
+          .from("documents")
+          .select("*")
+          .order("created_at", { ascending: false })
+          .limit(100)
 
         if (error) {
           throw error
         }
 
+        const docs = data ?? []
+        const caseIds = Array.from(new Set(docs.map((doc) => doc.case_id).filter((id): id is string => Boolean(id))))
+
+        let lookup: Record<string, { name: string | null; client: string | null }> = {}
+
+        if (caseIds.length > 0) {
+          const { data: caseRecords, error: caseError } = await supabase
+            .from("cases")
+            .select("id, case_name, client_name")
+            .in("id", caseIds)
+
+          if (caseError) {
+            console.warn("Unable to load related case data:", caseError)
+          } else if (caseRecords) {
+            lookup = caseRecords.reduce<Record<string, { name: string | null; client: string | null }>>((acc, caseItem) => {
+              if (!caseItem || !caseItem.id) return acc
+              acc[caseItem.id] = {
+                name: caseItem.case_name ?? null,
+                client: caseItem.client_name ?? null,
+              }
+              return acc
+            }, {})
+          }
+        }
+
+        const enrichedDocs = docs.map((doc) => {
+          const related = doc.case_id ? lookup[doc.case_id] : undefined
+          return {
+            ...doc,
+            case_name: doc.case_name ?? related?.name ?? null,
+            case_client: doc.case_client ?? related?.client ?? null,
+          }
+        })
+
         if (isMounted) {
-          const docs = data ?? []
-          setDocuments(docs)
+          setDocuments(enrichedDocs)
+          setCaseLookup(lookup)
 
           const counts: Record<string, number> = {}
-          docs.forEach((doc) => {
+          enrichedDocs.forEach((doc) => {
             const id = getCategoryId(doc)
             counts[id] = (counts[id] ?? 0) + 1
           })
@@ -165,6 +208,17 @@ export default function DocumentsPage() {
         if (isMounted) {
           setDocuments([])
           setCategoryCounts({})
+          setCaseLookup({})
+          const code = (error as { code?: string }).code
+          if (code === "57014") {
+            setErrorMessage(
+              "The document query took too long to respond. Please refine your filters or try again shortly.",
+            )
+          } else {
+            setErrorMessage(
+              error instanceof Error ? error.message : "Unable to load documents at this time. Please try again.",
+            )
+          }
         }
       } finally {
         if (isMounted) {
@@ -201,6 +255,30 @@ export default function DocumentsPage() {
     [categoryCounts],
   )
 
+  const caseOptions = useMemo(() => {
+    const map = new Map<string, { name: string | null; client: string | null }>()
+    documents.forEach((doc) => {
+      if (!doc.case_id) return
+      const lookup = caseLookup[doc.case_id]
+      map.set(doc.case_id, {
+        name: lookup?.name ?? doc.case_name ?? null,
+        client: lookup?.client ?? doc.case_client ?? null,
+      })
+    })
+
+    return Array.from(map.entries()).map(([id, value]) => ({
+      id,
+      label: value.name ?? `Case ${id.slice(0, 6)}`,
+      client: value.client ?? "—",
+    }))
+  }, [documents, caseLookup])
+
+  useEffect(() => {
+    if (caseFilter !== "all" && !caseOptions.some((option) => option.id === caseFilter)) {
+      setCaseFilter("all")
+    }
+  }, [caseFilter, caseOptions])
+
   const totalDocuments = documents.length
   const autoClassified = documents.filter((doc) => {
     const status = getDocumentStatus(doc).toLowerCase()
@@ -219,14 +297,16 @@ export default function DocumentsPage() {
 
   const filteredDocuments = documents.filter((doc) => {
     const categoryMatch = selectedCategory === "all" || getCategoryId(doc) === selectedCategory
+    const caseMatch = caseFilter === "all" || (doc.case_id && doc.case_id === caseFilter)
     const query = searchQuery.trim().toLowerCase()
-    if (!categoryMatch) return false
+    if (!categoryMatch || !caseMatch) return false
     if (query === "") return true
 
     const searchable = [
       doc.document_name,
       doc.original_filename,
       doc.case_name,
+      doc.case_client,
       doc.provider,
       doc.case_id,
       doc.category,
@@ -286,7 +366,9 @@ export default function DocumentsPage() {
           const status = getDocumentStatus(doc)
           const confidence = getConfidenceValue(doc)
           const fileExtension = getFileExtension(doc)
-          const caseReference = doc.case_name ?? (doc.case_id ? `Case #${doc.case_id}` : "Unassigned case")
+          const relatedCase = doc.case_id ? caseLookup[doc.case_id] : undefined
+          const caseReference = doc.case_name ?? relatedCase?.name ?? (doc.case_id ? `Case #${doc.case_id}` : "Unassigned case")
+          const clientReference = doc.case_client ?? relatedCase?.client ?? null
           const uploadedLabel = doc.created_at
             ? formatDistanceToNow(new Date(doc.created_at), { addSuffix: true })
             : "Upload time unavailable"
@@ -314,6 +396,9 @@ export default function DocumentsPage() {
                   <p className="text-xs text-gray-500">
                     {categoryLabel} • {caseReference}
                   </p>
+                  {clientReference && (
+                    <p className="text-xs text-gray-400">Client: {clientReference}</p>
+                  )}
                   <p className="text-xs text-gray-400">
                     Uploaded {uploadedLabel}
                     {fileSizeLabel ? ` • ${fileSizeLabel}` : ""}
@@ -369,10 +454,25 @@ export default function DocumentsPage() {
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
             </div>
-            <Button variant="outline" size="sm">
-              <Filter className="mr-2 h-4 w-4" />
-              Filter
-            </Button>
+            <Select value={caseFilter} onValueChange={setCaseFilter}>
+              <SelectTrigger className="w-full sm:w-56 bg-white">
+                <SelectValue placeholder="Filter by case" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All cases</SelectItem>
+                {caseOptions.length === 0 ? (
+                  <SelectItem value="none" disabled>
+                    No cases available
+                  </SelectItem>
+                ) : (
+                  caseOptions.map((option) => (
+                    <SelectItem key={option.id} value={option.id}>
+                      {option.label} {option.client ? `• ${option.client}` : ""}
+                    </SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
             <Button className="bg-cyan-600 hover:bg-cyan-700" asChild>
               <Link href="/dashboard/documents/upload">
                 <Upload className="mr-2 h-4 w-4" />
@@ -384,6 +484,11 @@ export default function DocumentsPage() {
       </div>
 
       <div className="p-6">
+        {errorMessage && (
+          <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+            {errorMessage}
+          </div>
+        )}
         <div className="mb-8 grid grid-cols-1 gap-6 md:grid-cols-4">
           <Card className="border-0 shadow-sm">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
