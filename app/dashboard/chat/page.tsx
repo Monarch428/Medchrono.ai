@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, useMemo } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -12,6 +12,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { MessageCircle, Send, Bot, User, FileText, ArrowLeft, Loader2 } from "lucide-react"
 import Link from "next/link"
+import { createClient } from "@/lib/supabase/client"
 
 interface Message {
   id: string
@@ -31,6 +32,7 @@ interface CaseData {
 }
 
 export default function ChatPage() {
+  const supabase = useMemo(() => createClient(), [])
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "welcome",
@@ -47,196 +49,151 @@ export default function ChatPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    // Load cases from localStorage
-    try {
-      const storedCases = JSON.parse(localStorage.getItem("medchrono_cases") || "[]")
-      setCases(storedCases)
-    } catch (error) {
-      console.error("Error loading cases:", error)
-    }
-  }, [])
+    let isMounted = true
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [messages])
+    const loadCases = async () => {
+      try {
+        const { data, error } = await supabase
+          .from("cases")
+          .select("id, case_name, client_name")
+          .order("created_at", { ascending: false })
 
-  const handleSendMessage = async () => {
-    if (!inputMessage.trim() || isLoading) return
-
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      content: inputMessage,
-      role: "user",
-      timestamp: new Date(),
-    }
-
-    setMessages((prev) => [...prev, userMessage])
-    setInputMessage("")
-    setIsLoading(true)
-
-    try {
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          message: inputMessage,
-          caseId: selectedCase === "all" ? undefined : selectedCase,
-        }),
-      })
-
-      if (!response.ok) {
-        let errorMessage = "Failed to get response"
-        try {
-          const errorData = await response.json()
-          errorMessage = errorData.error || errorMessage
-        } catch {
-          errorMessage = `Server error: ${response.status} ${response.statusText}`
+        if (error) {
+          throw error
         }
-        throw new Error(errorMessage)
-      }
 
-      const data = await response.json()
-
-      const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content: data.response,
-        role: "assistant",
-        timestamp: new Date(),
-        sources: data.sources,
+        if (isMounted) {
+          const normalized = (data ?? []).map((caseItem) => ({
+            id: caseItem.id,
+            name: caseItem.case_name ?? `Case ${caseItem.id.slice(0, 6)}`,
+            client: caseItem.client_name ?? "—",
+          }))
+          setCases(normalized)
+        }
+      } catch (error) {
+        console.error("Error loading cases:", error)
       }
-
-      setMessages((prev) => [...prev, assistantMessage])
-    } catch (error) {
-      console.error("Chat error:", error)
-      const errorMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content: `I apologize, but I encountered an error: ${error instanceof Error ? error.message : "Unknown error"}. Please try again.`,
-        role: "assistant",
-        timestamp: new Date(),
-      }
-      setMessages((prev) => [...prev, errorMessage])
-    } finally {
-      setIsLoading(false)
     }
-  }
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault()
-      handleSendMessage()
-    }
-  }
+    void loadCases()
 
-  return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="bg-white border-b px-6 py-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-4">
+    const channel = supabase
+      .channel("chat-cases-updates")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "cases" },
+        () => {
+          void loadCases()
+        },
+      )
+      .subscribe()
+
+    return (
+    <div className="space-y-6">
+      <div className="rounded-lg border bg-white p-4 shadow-sm">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center gap-3">
             <Button variant="ghost" size="sm" asChild>
               <Link href="/dashboard">
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                Back to Dashboard
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                Back to dashboard
               </Link>
             </Button>
-            <div className="flex items-center space-x-2">
-              <MessageCircle className="w-6 h-6 text-cyan-600" />
-              <h1 className="text-2xl font-bold text-gray-900">AI Assistant</h1>
+            <div className="flex items-center gap-2">
+              <MessageCircle className="h-6 w-6 text-cyan-600" />
+              <h1 className="text-2xl font-semibold text-gray-900">AI Assistant</h1>
             </div>
           </div>
-          <div className="flex items-center space-x-4">
-            <Select value={selectedCase} onValueChange={setSelectedCase}>
-              <SelectTrigger className="w-48">
-                <SelectValue placeholder="Select case context" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Cases & Documents</SelectItem>
-                {cases.map((case_) => (
-                  <SelectItem key={case_.id} value={case_.id}>
-                    {case_.name} - {case_.client}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          <Select value={selectedCase} onValueChange={setSelectedCase}>
+            <SelectTrigger className="w-full sm:w-56">
+              <SelectValue placeholder="Select case context" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All cases &amp; documents</SelectItem>
+              {cases.map((case_) => (
+                <SelectItem key={case_.id} value={case_.id}>
+                  {case_.name} - {case_.client}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
-      {/* Chat Interface */}
-      <div className="max-w-4xl mx-auto p-6">
-        <Card className="h-[calc(100vh-200px)] flex flex-col">
+      <div className="mx-auto w-full max-w-5xl px-4 sm:px-0">
+        <Card className="flex min-h-[520px] flex-col lg:min-h-[calc(100vh-260px)]">
           <CardHeader className="border-b">
-            <CardTitle className="flex items-center space-x-2">
-              <Bot className="w-5 h-5 text-cyan-600" />
+            <CardTitle className="flex items-center gap-2">
+              <Bot className="h-5 w-5 text-cyan-600" />
               <span>Medical Chronology AI Assistant</span>
             </CardTitle>
             <p className="text-sm text-gray-600">
-              Ask questions about your cases, documents, medical records, and chronologies
+              Ask questions about your cases, documents, medical records, and chronologies.
             </p>
           </CardHeader>
 
-          <CardContent className="flex-1 flex flex-col p-0">
-            {/* Messages */}
-            <ScrollArea className="flex-1 p-4">
+          <CardContent className="flex flex-1 flex-col p-0">
+            <ScrollArea className="flex-1 p-4 sm:p-6">
               <div className="space-y-4">
                 {messages.map((message) => (
                   <div
                     key={message.id}
-                    className={`flex items-start space-x-3 ${
-                      message.role === "user" ? "flex-row-reverse space-x-reverse" : ""
-                    }`}
+                    className={`flex items-start gap-3 ${message.role === "user" ? "flex-row-reverse text-right" : ""}`}
                   >
-                    <Avatar className="w-8 h-8">
+                    <Avatar className="h-8 w-8">
                       <AvatarFallback className={message.role === "user" ? "bg-cyan-100" : "bg-gray-100"}>
                         {message.role === "user" ? (
-                          <User className="w-4 h-4 text-cyan-600" />
+                          <User className="h-4 w-4 text-cyan-600" />
                         ) : (
-                          <Bot className="w-4 h-4 text-gray-600" />
+                          <Bot className="h-4 w-4 text-gray-600" />
                         )}
                       </AvatarFallback>
                     </Avatar>
 
-                    <div className={`flex-1 max-w-3xl ${message.role === "user" ? "text-right" : ""}`}>
+                    <div className={`flex flex-1 flex-col ${message.role === "user" ? "items-end" : "items-start"}`}>
                       <div
-                        className={`inline-block p-3 rounded-lg ${
-                          message.role === "user" ? "bg-cyan-600 text-white" : "bg-gray-100 text-gray-900"
+                        className={`max-w-full rounded-lg px-3 py-2 text-left sm:px-4 sm:py-3 ${
+                          message.role === "user"
+                            ? "bg-cyan-600 text-white sm:ml-auto"
+                            : "bg-gray-100 text-gray-900"
                         }`}
                       >
-                        <p className="whitespace-pre-wrap">{message.content}</p>
+                        <p className="whitespace-pre-wrap text-sm sm:text-base">{message.content}</p>
                       </div>
 
-                      {/* Sources */}
                       {message.sources && message.sources.length > 0 && (
-                        <div className="mt-2 flex flex-wrap gap-2">
+                        <div
+                          className={`mt-2 flex flex-wrap gap-2 ${
+                            message.role === "user" ? "justify-end" : "justify-start"
+                          }`}
+                        >
                           {message.sources.map((source, index) => (
-                            <Badge key={index} variant="outline" className="text-xs">
-                              <FileText className="w-3 h-3 mr-1" />
+                            <Badge key={index} variant="outline" className="flex items-center gap-1 text-xs">
+                              <FileText className="h-3 w-3" />
                               {source.filename}
                             </Badge>
                           ))}
                         </div>
                       )}
 
-                      <p className="text-xs text-gray-500 mt-1">{message.timestamp.toLocaleTimeString()}</p>
+                      <p className={`mt-1 text-xs text-gray-500 ${message.role === "user" ? "text-right" : ""}`}>
+                        {message.timestamp.toLocaleTimeString()}
+                      </p>
                     </div>
                   </div>
                 ))}
 
                 {isLoading && (
-                  <div className="flex items-start space-x-3">
-                    <Avatar className="w-8 h-8">
+                  <div className="flex items-start gap-3">
+                    <Avatar className="h-8 w-8">
                       <AvatarFallback className="bg-gray-100">
-                        <Bot className="w-4 h-4 text-gray-600" />
+                        <Bot className="h-4 w-4 text-gray-600" />
                       </AvatarFallback>
                     </Avatar>
-                    <div className="flex-1">
-                      <div className="inline-block p-3 rounded-lg bg-gray-100">
-                        <div className="flex items-center space-x-2">
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          <span className="text-gray-600">Thinking...</span>
-                        </div>
+                    <div className="rounded-lg bg-gray-100 px-3 py-2">
+                      <div className="flex items-center gap-2 text-sm text-gray-600">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Thinking...
                       </div>
                     </div>
                   </div>
@@ -246,9 +203,8 @@ export default function ChatPage() {
               </div>
             </ScrollArea>
 
-            {/* Input */}
-            <div className="border-t p-4">
-              <div className="flex items-center space-x-2">
+            <div className="border-t p-4 sm:p-6">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                 <Input
                   value={inputMessage}
                   onChange={(e) => setInputMessage(e.target.value)}
@@ -259,13 +215,22 @@ export default function ChatPage() {
                 />
                 <Button
                   onClick={handleSendMessage}
-                  disabled={!inputMessage.trim() || isLoading}
-                  className="bg-cyan-600 hover:bg-cyan-700"
+                  disabled={isLoading || inputMessage.trim() === ""}
+                  className="flex items-center gap-2 bg-cyan-600 hover:bg-cyan-700"
                 >
-                  <Send className="w-4 h-4" />
+                  {isLoading ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Sending
+                    </>
+                  ) : (
+                    <>
+                      <Send className="h-4 w-4" />
+                      Send
+                    </>
+                  )}
                 </Button>
               </div>
-              <p className="text-xs text-gray-500 mt-2">Press Enter to send, Shift+Enter for new line</p>
             </div>
           </CardContent>
         </Card>
