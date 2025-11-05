@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -110,11 +110,12 @@ const generationSteps = [
 
 export default function TemplatesPage() {
   const searchParams = useSearchParams()
-  const caseIdFromUrl = searchParams?.get("case") || ""
+  const caseIdFromUrl = searchParams?.get("caseId") || searchParams?.get("case") || ""
   const chronologyFromUrl = searchParams?.get("chronology") || ""
 
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null)
   const [selectedCase, setSelectedCase] = useState<string>(caseIdFromUrl)
+  const [caseLocked, setCaseLocked] = useState<boolean>(Boolean(caseIdFromUrl))
   const [dateRange, setDateRange] = useState({ start: "", end: "" })
   const [selectedProviders, setSelectedProviders] = useState<string[]>([])
   const [selectedSpecialties, setSelectedSpecialties] = useState<string[]>([])
@@ -125,6 +126,17 @@ export default function TemplatesPage() {
   const [storedCases, setStoredCases] = useState<any[]>([])
   const [chronologyData, setChronologyData] = useState<any>(null)
   const [showCustomization, setShowCustomization] = useState(false)
+  const selectedCaseInfo = useMemo(
+    () => storedCases.find((caseItem) => caseItem.id === selectedCase) ?? null,
+    [storedCases, selectedCase],
+  )
+
+  useEffect(() => {
+    setCaseLocked(Boolean(caseIdFromUrl))
+    if (caseIdFromUrl) {
+      setSelectedCase(caseIdFromUrl)
+    }
+  }, [caseIdFromUrl])
 
   // Load cases from API
   useEffect(() => {
@@ -155,6 +167,14 @@ export default function TemplatesPage() {
 
     fetchCases()
   }, [])
+
+  useEffect(() => {
+    if (!caseLocked || !selectedCase) return
+    const caseExists = storedCases.some((caseItem) => caseItem.id === selectedCase)
+    if (!caseExists) {
+      setCaseLocked(false)
+    }
+  }, [caseLocked, selectedCase, storedCases])
 
   // Load chronology data from URL params or localStorage
   useEffect(() => {
@@ -446,7 +466,14 @@ End of Report
                 <CardContent className="space-y-6">
                   <div className="space-y-2">
                     <Label htmlFor="case-select">Select Case *</Label>
-                    <Select value={selectedCase} onValueChange={setSelectedCase}>
+                    <Select
+                      value={selectedCase}
+                      onValueChange={(value) => {
+                        setSelectedCase(value)
+                        setCaseLocked(false)
+                      }}
+                      disabled={caseLocked && Boolean(selectedCaseInfo)}
+                    >
                       <SelectTrigger>
                         <SelectValue placeholder="Choose a case" />
                       </SelectTrigger>
@@ -464,13 +491,31 @@ End of Report
                         )}
                       </SelectContent>
                     </Select>
-                    {storedCases.length === 0 && (
-                      <p className="text-sm text-gray-500 mt-2">
-                        <Link href="/dashboard/cases/new" className="text-cyan-600 hover:underline">
-                          Create a new case
-                        </Link>{" "}
-                        to generate chronologies.
-                      </p>
+                    {caseLocked && selectedCaseInfo ? (
+                      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-emerald-700">
+                        <CheckCircle className="h-3.5 w-3.5" />
+                        <span>
+                          Using <span className="font-medium">{selectedCaseInfo.name}</span> for {selectedCaseInfo.client}.
+                        </span>
+                        <Button
+                          type="button"
+                          variant="link"
+                          size="sm"
+                          className="h-auto px-0 text-cyan-600"
+                          onClick={() => setCaseLocked(false)}
+                        >
+                          Change case
+                        </Button>
+                      </div>
+                    ) : (
+                      storedCases.length === 0 && (
+                        <p className="mt-2 text-sm text-gray-500">
+                          <Link href="/dashboard/cases/new" className="text-cyan-600 hover:underline">
+                            Create a new case
+                          </Link>{" "}
+                          to generate chronologies.
+                        </p>
+                      )
                     )}
                   </div>
 
