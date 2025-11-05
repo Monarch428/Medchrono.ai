@@ -82,6 +82,7 @@ export default function ActiveCasesPage() {
   const [loading, setLoading] = useState(true)
   const supabase = useMemo(() => createClient(), [])
   const router = useRouter()
+  const [searchTerm, setSearchTerm] = useState("")
 
   useEffect(() => {
     let isMounted = true
@@ -191,6 +192,28 @@ export default function ActiveCasesPage() {
     )
   }
 
+  const filteredCases = useMemo(() => {
+    const query = searchTerm.trim().toLowerCase()
+    if (!query) {
+      return activeCases
+    }
+
+    return activeCases.filter((caseItem) => {
+      const haystacks = [
+        caseItem.case_name,
+        caseItem.client_name,
+        caseItem.assigned_attorney,
+        caseItem.case_status,
+        caseItem.priority_level,
+        caseItem.id,
+      ]
+        .filter((value): value is string => Boolean(value))
+        .map((value) => value.toLowerCase())
+
+      return haystacks.some((value) => value.includes(query))
+    })
+  }, [activeCases, searchTerm])
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
@@ -215,7 +238,13 @@ export default function ActiveCasesPage() {
           <div className="flex items-center space-x-4">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-              <Input placeholder="Search cases..." className="pl-10 w-80 bg-gray-50 border-0" />
+              <Input
+                placeholder="Search cases..."
+                className="pl-10 w-80 bg-gray-50 border-0"
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                aria-label="Search cases"
+              />
             </div>
             <Button variant="outline" size="sm">
               <Filter className="w-4 h-4 mr-2" />
@@ -308,6 +337,11 @@ export default function ActiveCasesPage() {
                   </Link>
                 </Button>
               </div>
+            ) : filteredCases.length === 0 ? (
+              <div className="text-center py-12 text-sm text-gray-500">
+                <p className="font-medium text-gray-900">No cases match your search.</p>
+                <p className="mt-1 text-gray-500">Try adjusting your keywords or clearing the search filter.</p>
+              </div>
             ) : (
               <Table>
                 <TableHeader>
@@ -323,7 +357,7 @@ export default function ActiveCasesPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {activeCases.map((case_) => {
+                  {filteredCases.map((case_) => {
                     const status = case_.case_status ?? case_.status ?? "Active"
                     const priority = getPriorityLabel(case_)
                     const progressValue =

@@ -138,6 +138,7 @@ export default function DocumentsPage() {
   const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
   const [caseLookup, setCaseLookup] = useState<Record<string, { name: string | null; client: string | null }>>({})
+  const [availableCases, setAvailableCases] = useState<Array<{ id: string; name: string | null; client: string | null }>>([])
   const [caseFilter, setCaseFilter] = useState("all")
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
@@ -148,53 +149,95 @@ export default function DocumentsPage() {
       setLoading(true)
       try {
         setErrorMessage(null)
-        const { data, error } = await supabase
-          .from("documents")
-          .select("*")
-          .order("created_at", { ascending: false })
-          .limit(100)
+        const { data: caseRecords, error: caseError } = await supabase
+          .from("cases")
+          .select("id, case_name, client_name")
+          .order("updated_at", { ascending: false })
 
-        if (error) {
-          throw error
+        if (caseError) {
+          throw caseError
         }
 
-        const docs = data ?? []
-        const caseIds = Array.from(new Set(docs.map((doc) => doc.case_id).filter((id): id is string => Boolean(id))))
+        const normalizedCases = (caseRecords ?? [])
+          .map((caseItem) => ({
+            id: caseItem?.id ? String(caseItem.id) : "",
+            name: caseItem?.case_name ?? null,
+            client: caseItem?.client_name ?? null,
+          }))
+          .filter((caseItem) => caseItem.id.length > 0)
 
-        let lookup: Record<string, { name: string | null; client: string | null }> = {}
+        const lookup = normalizedCases.reduce<Record<string, { name: string | null; client: string | null }>>(
+          (acc, caseItem) => {
+            acc[caseItem.id] = {
+              name: caseItem.name,
+              client: caseItem.client,
+            }
+            return acc
+          },
+          {},
+        )
 
-        if (caseIds.length > 0) {
-          const { data: caseRecords, error: caseError } = await supabase
-            .from("cases")
-            .select("id, case_name, client_name")
-            .in("id", caseIds)
+        if (isMounted) {
+          setAvailableCases(normalizedCases)
+          setCaseLookup(lookup)
+        }
 
-          if (caseError) {
-            console.warn("Unable to load related case data:", caseError)
-          } else if (caseRecords) {
-            lookup = caseRecords.reduce<Record<string, { name: string | null; client: string | null }>>((acc, caseItem) => {
-              if (!caseItem || !caseItem.id) return acc
-              acc[caseItem.id] = {
-                name: caseItem.case_name ?? null,
-                client: caseItem.client_name ?? null,
-              }
-              return acc
-            }, {})
+        const caseIds = normalizedCases.map((caseItem) => caseItem.id)
+
+        if (caseIds.length === 0) {
+          if (isMounted) {
+            setDocuments([])
+            setCategoryCounts({})
+          }
+          return
+        }
+
+        const selectColumns =
+          "id, document_name, original_filename, category, document_category, status, processing_status, confidence, confidence_score, created_at, updated_at, case_id, case_name, case_client, provider, file_type, file_size"
+
+        const limits = [100, 50, 25]
+        let documentsResult: DocumentRecord[] = []
+        let lastError: any = null
+
+        for (const limit of limits) {
+          const { data, error } = await supabase
+            .from("documents")
+            .select(selectColumns)
+            .in("case_id", caseIds)
+            .order("created_at", { ascending: false })
+            .limit(limit)
+
+          if (!error) {
+            documentsResult = data ?? []
+            break
+          }
+
+          lastError = error
+
+          if (error.code !== "57014") {
+            throw error
           }
         }
 
-        const enrichedDocs = docs.map((doc) => {
-          const related = doc.case_id ? lookup[doc.case_id] : undefined
-          return {
-            ...doc,
-            case_name: doc.case_name ?? related?.name ?? null,
-            case_client: doc.case_client ?? related?.client ?? null,
-          }
-        })
+        if (!documentsResult.length && lastError) {
+          throw lastError
+        }
+
+        const enrichedDocs = documentsResult
+          .filter((doc) => doc.case_id && caseIds.includes(String(doc.case_id)))
+          .map((doc) => {
+            const caseKey = String(doc.case_id)
+            const related = lookup[caseKey]
+            return {
+              ...doc,
+              case_id: caseKey,
+              case_name: doc.case_name ?? related?.name ?? null,
+              case_client: doc.case_client ?? related?.client ?? null,
+            }
+          })
 
         if (isMounted) {
           setDocuments(enrichedDocs)
-          setCaseLookup(lookup)
 
           const counts: Record<string, number> = {}
           enrichedDocs.forEach((doc) => {
@@ -209,6 +252,7 @@ export default function DocumentsPage() {
           setDocuments([])
           setCategoryCounts({})
           setCaseLookup({})
+          setAvailableCases([])
           const code = (error as { code?: string }).code
           if (code === "57014") {
             setErrorMessage(
@@ -255,23 +299,15 @@ export default function DocumentsPage() {
     [categoryCounts],
   )
 
-  const caseOptions = useMemo(() => {
-    const map = new Map<string, { name: string | null; client: string | null }>()
-    documents.forEach((doc) => {
-      if (!doc.case_id) return
-      const lookup = caseLookup[doc.case_id]
-      map.set(doc.case_id, {
-        name: lookup?.name ?? doc.case_name ?? null,
-        client: lookup?.client ?? doc.case_client ?? null,
-      })
-    })
-
-    return Array.from(map.entries()).map(([id, value]) => ({
-      id,
-      label: value.name ?? `Case ${id.slice(0, 6)}`,
-      client: value.client ?? "—",
-    }))
-  }, [documents, caseLookup])
+  const caseOptions = useMemo(
+    () =>
+      availableCases.map((caseItem) => ({
+        id: caseItem.id,
+        label: caseItem.name ?? `Case ${caseItem.id.slice(0, 6)}`,
+        client: caseItem.client ?? "—",
+      })),
+    [availableCases],
+  )
 
   useEffect(() => {
     if (caseFilter !== "all" && !caseOptions.some((option) => option.id === caseFilter)) {
