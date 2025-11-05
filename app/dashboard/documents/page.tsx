@@ -40,23 +40,27 @@ const documentCategories = [
 
 interface DocumentRecord {
   id: string
-  document_name?: string | null
-  original_filename?: string | null
-  category?: string | null
-  document_category?: string | null
-  status?: string | null
+  filename?: string | null
+  file_type?: string | null
+  file_size?: number | string | null
+  case_id?: string | null
   processing_status?: string | null
-  processing_stage?: string | null
-  confidence?: number | null
-  confidence_score?: number | null
+  status?: string | null
   created_at?: string | null
   updated_at?: string | null
-  case_id?: string | null
+  storage_path?: string | null
+  extracted_text?: string | null
+  key_findings?: unknown
+  timeline_events?: unknown
+  medical_data?: Record<string, unknown> | null
+  missing_records?: unknown
+  category?: string | null
+  document_category?: string | null
+  provider?: string | null
+  confidence?: number | string | null
+  confidence_score?: number | string | null
   case_name?: string | null
   case_client?: string | null
-  provider?: string | null
-  file_type?: string | null
-  file_size?: number | null
 }
 
 const getConfidenceClasses = (confidence: number | null) => {
@@ -117,15 +121,23 @@ const getCategoryLabel = (doc: DocumentRecord) => {
 const getDocumentStatus = (doc: DocumentRecord) => doc.processing_status ?? doc.status ?? "Pending"
 
 const getConfidenceValue = (doc: DocumentRecord) => {
-  const raw = doc.confidence ?? doc.confidence_score ?? null
-  if (raw === null || Number.isNaN(Number(raw))) {
+  const direct = doc.confidence ?? doc.confidence_score
+  const derived =
+    doc.medical_data && typeof doc.medical_data === "object" && doc.medical_data !== null
+      ? (doc.medical_data as Record<string, unknown>).confidence
+      : undefined
+  const raw = direct ?? derived ?? null
+
+  if (raw === null || raw === undefined) {
     return null
   }
-  return typeof raw === "string" ? Number.parseFloat(raw) : raw
+
+  const numeric = typeof raw === "string" ? Number.parseFloat(raw) : Number(raw)
+  return Number.isFinite(numeric) ? numeric : null
 }
 
 const getFileExtension = (doc: DocumentRecord) => {
-  const name = doc.original_filename ?? doc.document_name ?? ""
+  const name = doc.filename ?? ""
   const parts = name.split(".")
   return parts.length > 1 ? parts.pop() ?? "pdf" : doc.file_type ?? "pdf"
 }
@@ -150,55 +162,18 @@ export default function DocumentsPage() {
       try {
         setErrorMessage(null)
         const {
-          data: { user },
-        } = await supabase.auth.getUser()
+          data: caseRecords,
+          error: caseError,
+        } = await supabase
+          .from("cases")
+          .select("id, case_name, client_name")
+          .order("updated_at", { ascending: false })
 
-        let firmId: string | null = null
-
-        if (user) {
-          const { data: profile, error: profileError } = await supabase
-            .from("user_profiles")
-            .select("firm_id")
-            .eq("id", user.id)
-            .maybeSingle()
-
-          if (!profileError && profile?.firm_id) {
-            firmId = String(profile.firm_id)
-          } else if (profileError) {
-            console.warn(
-              "Unable to determine firm for documents:",
-              profileError.message ?? profileError,
-            )
-          }
+        if (caseError) {
+          throw caseError
         }
 
-        let caseQuery = supabase.from("cases").select("id, case_name, client_name")
-        if (firmId) {
-          caseQuery = caseQuery.eq("firm_id", firmId)
-        }
-
-        const caseResult = await caseQuery.order("updated_at", { ascending: false })
-
-        let caseRecords = caseResult.data ?? []
-
-        if (caseResult.error) {
-          console.warn(
-            "Case query failed, retrying without firm filter:",
-            caseResult.error.message ?? caseResult.error,
-          )
-          const fallback = await supabase
-            .from("cases")
-            .select("id, case_name, client_name")
-            .order("updated_at", { ascending: false })
-
-          caseRecords = fallback.data ?? []
-
-          if (fallback.error) {
-            throw fallback.error
-          }
-        }
-
-        const normalizedCases = caseRecords
+        const normalizedCases = (caseRecords ?? [])
           .map((caseItem) => ({
             id: caseItem?.id ? String(caseItem.id) : "",
             name: caseItem?.case_name ?? null,
@@ -224,14 +199,6 @@ export default function DocumentsPage() {
 
         const caseIds = normalizedCases.map((caseItem) => caseItem.id)
 
-        if (caseIds.length === 0) {
-          if (isMounted) {
-            setDocuments([])
-            setCategoryCounts({})
-          }
-          return
-        }
-
         const limits = [100, 50, 25]
         let documentsResult: DocumentRecord[] = []
         let lastError: any = null
@@ -239,16 +206,14 @@ export default function DocumentsPage() {
         for (const limit of limits) {
           let query = supabase
             .from("documents")
-            .select("*")
+            .select(
+              "id, filename, file_type, file_size, case_id, processing_status, created_at, updated_at, storage_path, extracted_text, medical_data, missing_records, key_findings, timeline_events",
+            )
             .order("created_at", { ascending: false })
             .limit(limit)
 
           if (caseIds.length > 0) {
             query = query.in("case_id", caseIds)
-          }
-
-          if (firmId) {
-            query = query.eq("firm_id", firmId)
           }
 
           const { data, error } = await query
@@ -260,34 +225,6 @@ export default function DocumentsPage() {
           }
 
           lastError = error
-
-          if (firmId) {
-            console.warn(
-              "Document query filtered by firm failed, retrying without firm filter:",
-              error?.message ?? error,
-            )
-
-            let fallbackQuery = supabase
-              .from("documents")
-              .select("*")
-              .order("created_at", { ascending: false })
-              .limit(limit)
-
-            if (caseIds.length > 0) {
-              fallbackQuery = fallbackQuery.in("case_id", caseIds)
-            }
-
-            const { data: fallbackData, error: fallbackError } = await fallbackQuery
-
-            if (!fallbackError) {
-              documentsResult = fallbackData ?? []
-              lastError = null
-              break
-            }
-
-            lastError = fallbackError
-          }
-
           if (!lastError || lastError.code !== "57014") {
             break
           }
@@ -298,13 +235,12 @@ export default function DocumentsPage() {
         }
 
         const enrichedDocs = documentsResult
-          .filter((doc) => doc.case_id && caseIds.includes(String(doc.case_id)))
           .map((doc) => {
-            const caseKey = String(doc.case_id)
-            const related = lookup[caseKey]
+            const caseKey = doc.case_id ? String(doc.case_id) : ""
+            const related = caseKey ? lookup[caseKey] : undefined
             return {
               ...doc,
-              case_id: caseKey,
+              case_id: caseKey || null,
               case_name: doc.case_name ?? related?.name ?? null,
               case_client: doc.case_client ?? related?.client ?? null,
             }
@@ -418,8 +354,7 @@ export default function DocumentsPage() {
     if (query === "") return true
 
     const searchable = [
-      doc.document_name,
-      doc.original_filename,
+      doc.filename,
       doc.case_name,
       doc.case_client,
       doc.provider,
@@ -487,8 +422,9 @@ export default function DocumentsPage() {
           const uploadedLabel = doc.created_at
             ? formatDistanceToNow(new Date(doc.created_at), { addSuffix: true })
             : "Upload time unavailable"
-          const fileSizeLabel =
-            doc.file_size && doc.file_size > 0 ? `${(Number(doc.file_size) / 1024 / 1024).toFixed(1)} MB` : null
+          const fileSizeValue = Number(doc.file_size)
+          const fileSizeLabel = !Number.isNaN(fileSizeValue) && fileSizeValue > 0 ? `${(fileSizeValue / 1024 / 1024).toFixed(1)} MB` : null
+          const displayName = doc.filename ?? (doc.case_id ? `Document ${doc.case_id}` : `Document ${doc.id.slice(0, 8)}`)
 
           return (
             <div
@@ -501,9 +437,7 @@ export default function DocumentsPage() {
                 </div>
                 <div className="space-y-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <h4 className="text-sm font-medium text-gray-900">
-                      {doc.document_name ?? doc.original_filename ?? "Untitled document"}
-                    </h4>
+                    <h4 className="text-sm font-medium text-gray-900">{displayName}</h4>
                     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs ${getConfidenceClasses(confidence)}`}>
                       {confidence === null ? "Confidence pending" : `${confidence.toFixed(0)}% confidence`}
                     </span>

@@ -1,11 +1,24 @@
 "use client"
 
+import { useMemo } from "react"
 import { ArrowLeft, FileText, AlertCircle, Plus } from "lucide-react"
 import Link from "next/link"
+import { useParams } from "next/navigation"
+
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 
-export default function DocumentDetailPage({ params }: { params: { id: string } }) {
+export default function DocumentDetailPage() {
+  const params = useParams<{ id?: string | string[] }>()
+  const documentId = useMemo(() => {
+    if (!params) return ""
+    const raw = params.id
+    if (Array.isArray(raw)) {
+      return raw[0] ?? ""
+    }
+    return raw ?? ""
+  }, [params])
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -19,7 +32,7 @@ export default function DocumentDetailPage({ params }: { params: { id: string } 
           </Link>
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Document Not Found</h1>
-            <p className="text-gray-600">Document ID: {params.id}</p>
+            <p className="text-gray-600">Document ID: {documentId || "unknown"}</p>
           </div>
         </div>
       </div>

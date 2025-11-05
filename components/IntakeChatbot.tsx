@@ -1,11 +1,10 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Badge } from "@/components/ui/badge"
 import { Bot, Loader2, MessageCircle, Send, User, X } from "lucide-react"
 
@@ -69,26 +68,11 @@ export function IntakeChatbot() {
   const [isLoading, setIsLoading] = useState(false)
   const [suggestedPrompts, setSuggestedPrompts] = useState<string[]>(DEFAULT_SUGGESTIONS)
   const [isOpen, setIsOpen] = useState(false)
-  const [hasMounted, setHasMounted] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
-
-  const conversationHistory = useMemo(
-    () =>
-      messages.map((message) => ({
-        role: message.role,
-        content: message.content,
-        timestamp: message.timestamp.toISOString(),
-      })),
-    [messages],
-  )
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages, isLoading])
-
-  useEffect(() => {
-    setHasMounted(true)
-  }, [])
 
   const handleSendMessage = async (override?: string) => {
     const messageToSend = (override ?? input).trim()
@@ -109,15 +93,9 @@ export function IntakeChatbot() {
       const response = await fetch("/api/intake", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // body: JSON.stringify({
-        //   message: messageToSend,
-        //   history: conversationHistory,
-        // }),
         body: JSON.stringify({
-        user_message: messageToSend,
-        // session_id: optionalSessionId, // add later if needed
-      }),
-
+          user_message: messageToSend,
+        }),
       })
 
       const text = await response.text()
@@ -165,11 +143,6 @@ export function IntakeChatbot() {
     }
   }
 
-  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    void handleSendMessage()
-  }
-
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault()
@@ -182,138 +155,142 @@ export function IntakeChatbot() {
     void handleSendMessage(prompt)
   }
 
-  return (
-    <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-3">
-      {isOpen && (
-        <Card className="w-[360px] max-w-[90vw] shadow-2xl border border-gray-200 flex flex-col">
-          <CardHeader className="pb-3">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <CardTitle className="flex items-center gap-2 text-lg">
-                  <MessageCircle className="h-5 w-5 text-cyan-600" />
-                  Client Intake Assistant
-                </CardTitle>
-                <CardDescription>
-                  Capture client intent and case details through a guided conversation.
-                </CardDescription>
-              </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                onClick={() => setIsOpen(false)}
-                className="h-8 w-8 text-gray-500 hover:text-gray-900"
-              >
-                <X className="h-4 w-4" />
-                <span className="sr-only">Close client intake assistant</span>
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4 flex-1">
-            <div className="flex flex-col rounded-lg border bg-white/60">
-              <ScrollArea className="h-72 p-4">
-                <div className="space-y-4">
-                  {messages.map((message) => (
-                    <div
-                      key={message.id}
-                      className={`flex items-start gap-3 ${message.role === "user" ? "flex-row-reverse text-right" : ""}`}
-                    >
-                      <div
-                        className={`flex h-8 w-8 items-center justify-center rounded-full ${
-                          message.role === "user" ? "bg-cyan-600" : "bg-gray-100"
-                        }`}
-                      >
-                        {message.role === "user" ? (
-                          <User className="h-4 w-4 text-white" />
-                        ) : (
-                          <Bot className="h-4 w-4 text-gray-700" />
-                        )}
-                      </div>
-                      <div
-                        className={`max-w-[80%] rounded-lg px-4 py-3 text-sm shadow-sm ${
-                          message.role === "user"
-                            ? "bg-cyan-600 text-white"
-                            : "bg-white text-gray-900 border border-gray-100"
-                        }`}
-                      >
-                        <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
-                        {hasMounted && (
-                          <p className="mt-2 text-[10px] uppercase tracking-wide text-gray-300">
-                            {message.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                  {isLoading && (
-                    <div className="flex items-start gap-3">
-                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-100">
-                        <Bot className="h-4 w-4 text-gray-700" />
-                      </div>
-                      <div className="flex items-center gap-2 rounded-lg border border-gray-100 bg-white px-4 py-3 text-sm text-gray-600 shadow-sm">
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        <span>Thinking...</span>
-                      </div>
-                    </div>
-                  )}
-                  <div ref={messagesEndRef} />
-                </div>
-              </ScrollArea>
-              <form onSubmit={handleSubmit} className="border-t bg-gray-50 p-4">
-                <div className="flex items-center gap-2">
-                  <Input
-                    value={input}
-                    onChange={(event) => setInput(event.target.value)}
-                    onKeyDown={handleKeyDown}
-                    placeholder="Share your situation or ask a question..."
-                    disabled={isLoading}
-                    className="flex-1"
-                  />
-                  <Button type="submit" disabled={isLoading || !input.trim()} className="bg-cyan-600 hover:bg-cyan-700">
-                    <Send className="h-4 w-4" />
-                  </Button>
-                </div>
-                <p className="mt-2 text-xs text-gray-500">Press Enter to send. Shift + Enter to add a new line.</p>
-              </form>
-            </div>
-
-            <div className="space-y-2">
-              <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Suggested prompts</p>
-              <div className="flex flex-wrap gap-2">
-                {suggestedPrompts.map((prompt) => (
-                  <Button
-                    key={prompt}
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="rounded-full border-cyan-100 bg-white text-xs text-cyan-700 hover:bg-cyan-50"
-                    onClick={() => handlePromptClick(prompt)}
-                    disabled={isLoading}
-                  >
-                    {prompt}
-                  </Button>
-                ))}
-                {suggestedPrompts.length === 0 && (
-                  <Badge variant="secondary" className="bg-gray-100 text-gray-600">
-                    Suggestions will appear as you chat
-                  </Badge>
-                )}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
+  if (!isOpen) {
+    return (
       <Button
         type="button"
-        size="lg"
-        className="h-12 rounded-full bg-cyan-600 px-5 text-white shadow-lg hover:bg-cyan-700"
-        onClick={() => setIsOpen((prev) => !prev)}
+        size="icon"
+        className="fixed bottom-6 right-6 h-14 w-14 rounded-full bg-cyan-600 text-white shadow-lg hover:bg-cyan-700"
+        onClick={() => setIsOpen(true)}
       >
-        <MessageCircle className="mr-2 h-5 w-5" />
-        {isOpen ? "Hide Assistant" : "Chat with AI"}
+        <MessageCircle className="h-6 w-6" />
+        <span className="sr-only">Open intake assistant</span>
       </Button>
-    </div>
+    )
+  }
+
+  return (
+    <Card className="fixed bottom-6 right-6 z-50 flex h-[600px] w-96 max-w-[calc(100vw-2rem)] flex-col shadow-2xl">
+      <CardHeader className="flex-none border-b pb-3">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-cyan-50">
+              <MessageCircle className="h-5 w-5 text-cyan-600" />
+            </div>
+            <div>
+              <CardTitle className="text-lg">Client Intake Assistant</CardTitle>
+              <CardDescription className="text-xs text-gray-500">
+                Capture client details through a guided, AI-driven conversation.
+              </CardDescription>
+            </div>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={() => setIsOpen(false)}
+            className="h-8 w-8 text-gray-500 hover:text-gray-900"
+          >
+            <X className="h-4 w-4" />
+            <span className="sr-only">Close client intake assistant</span>
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="flex-1 space-y-4 overflow-y-auto p-4">
+        {messages.map((message) => (
+          <div key={message.id} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
+            <div
+              className={`flex max-w-[85%] gap-3 ${message.role === "user" ? "flex-row-reverse" : "flex-row"}`}
+            >
+              <div
+                className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full ${
+                  message.role === "user" ? "bg-cyan-600" : "bg-gray-200"
+                }`}
+              >
+                {message.role === "user" ? (
+                  <User className="h-4 w-4 text-white" />
+                ) : (
+                  <Bot className="h-4 w-4 text-gray-700" />
+                )}
+              </div>
+              <div
+                className={`rounded-lg p-3 text-sm shadow-sm ${
+                  message.role === "user"
+                    ? "bg-cyan-600 text-white"
+                    : "bg-white text-gray-900 ring-1 ring-gray-100"
+                }`}
+              >
+                <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
+                <p
+                  className={`mt-2 text-[10px] uppercase tracking-wide ${
+                    message.role === "user" ? "text-cyan-100" : "text-gray-400"
+                  }`}
+                >
+                  {message.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                </p>
+              </div>
+            </div>
+          </div>
+        ))}
+        {isLoading && (
+          <div className="flex items-start gap-3">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-200">
+              <Bot className="h-4 w-4 text-gray-700" />
+            </div>
+            <div className="flex items-center gap-2 rounded-lg bg-gray-100 px-4 py-3 text-sm text-gray-600">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span>Thinking...</span>
+            </div>
+          </div>
+        )}
+        <div ref={messagesEndRef} />
+      </CardContent>
+      <div className="flex-none space-y-3 border-t p-4">
+        <div className="flex items-center gap-2">
+          <Input
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Share your situation or ask a question..."
+            disabled={isLoading}
+            className="flex-1"
+          />
+          <Button
+            type="button"
+            onClick={() => void handleSendMessage()}
+            disabled={isLoading || !input.trim()}
+            className="bg-cyan-600 hover:bg-cyan-700"
+          >
+            <Send className="h-4 w-4" />
+            <span className="sr-only">Send message</span>
+          </Button>
+        </div>
+        <div className="space-y-2">
+          <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Suggested prompts</p>
+          <div className="flex flex-wrap gap-2">
+            {suggestedPrompts.map((prompt) => (
+              <Button
+                key={prompt}
+                type="button"
+                variant="outline"
+                size="sm"
+                className="rounded-full border-cyan-100 bg-white text-xs text-cyan-700 hover:bg-cyan-50"
+                onClick={() => handlePromptClick(prompt)}
+                disabled={isLoading}
+              >
+                {prompt}
+              </Button>
+            ))}
+            {suggestedPrompts.length === 0 && (
+              <Badge variant="secondary" className="bg-gray-100 text-gray-600">
+                Suggestions will appear as you chat
+              </Badge>
+            )}
+          </div>
+        </div>
+        <p className="text-xs text-gray-500">Powered by AI. Responses are for intake assistance only.</p>
+      </div>
+    </Card>
   )
 }
 

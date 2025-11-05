@@ -47,6 +47,7 @@ interface CaseData {
   clientEmail?: string
   incidentLocation?: string
   description?: string
+  representingParty?: string
 }
 
 type CaseRecord = {
@@ -54,10 +55,11 @@ type CaseRecord = {
   case_name?: string | null
   client_name?: string | null
   incident_date?: string | null
-  injury_type?: string | null
+  primary_injury?: string | null
   sub_category?: string | null
   case_status?: string | null
   priority_level?: string | null
+  representing_party?: string | null
   progress?: number | string | null
   estimated_value?: string | number | null
   assigned_attorney?: string | null
@@ -92,7 +94,7 @@ const mapRecordToCaseData = (record: CaseRecord | null): CaseData | null => {
     name: record.case_name ?? "Untitled case",
     client: record.client_name ?? "—",
     dateOfIncident: record.incident_date ?? "",
-    injuryType: record.injury_type ?? "",
+    injuryType: record.primary_injury ?? "",
     subCategory: record.sub_category ?? "",
     status: record.case_status ?? "Active",
     priority: record.priority_level ?? "Normal",
@@ -105,6 +107,7 @@ const mapRecordToCaseData = (record: CaseRecord | null): CaseData | null => {
     clientEmail: record.client_email ?? undefined,
     incidentLocation: record.incident_location ?? undefined,
     description: record.case_description ?? undefined,
+    representingParty: record.representing_party ?? undefined,
   }
 }
 
@@ -112,7 +115,7 @@ const mapCaseDataToUpdates = (caseData: CaseData) => ({
   case_name: caseData.name || null,
   client_name: caseData.client || null,
   incident_date: caseData.dateOfIncident || null,
-  injury_type: caseData.injuryType || null,
+  primary_injury: caseData.injuryType || null,
   sub_category: caseData.subCategory || null,
   case_status: caseData.status || null,
   priority_level: caseData.priority || null,
@@ -124,6 +127,7 @@ const mapCaseDataToUpdates = (caseData: CaseData) => ({
   client_email: caseData.clientEmail || null,
   incident_location: caseData.incidentLocation || null,
   case_description: caseData.description || null,
+  representing_party: caseData.representingParty || null,
 })
 
 export default function CaseDetailsPage() {
@@ -158,7 +162,7 @@ export default function CaseDetailsPage() {
         const { data, error } = await supabase
           .from("cases")
           .select(
-            "id, case_name, client_name, incident_date, injury_type, sub_category, case_status, priority_level, progress, estimated_value, assigned_attorney, last_activity, created_at, client_phone, client_email, incident_location, case_description",
+            "id, case_name, client_name, incident_date, primary_injury, sub_category, case_status, priority_level, representing_party, progress, estimated_value, assigned_attorney, last_activity, created_at, client_phone, client_email, incident_location, case_description",
           )
           .eq("id", caseId)
           .maybeSingle()

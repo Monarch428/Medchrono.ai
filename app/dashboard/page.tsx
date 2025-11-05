@@ -25,7 +25,7 @@ import { Progress } from "@/components/ui/progress"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Input } from "@/components/ui/input"
 import { createClient } from "@/lib/supabase/client"
-import { DocumentChatbot } from "@/components/DocumentChatbot"
+import { IntakeChatbot } from "@/components/IntakeChatbot"
 
 interface CaseRecord {
   id: string
@@ -556,7 +556,7 @@ export default function DashboardPage() {
             </CardContent>
           </Card>
 
-          <DocumentChatbot />
+          <IntakeChatbot />
         </div>
       </div>
     </div>
