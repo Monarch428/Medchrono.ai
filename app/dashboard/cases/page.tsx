@@ -30,7 +30,11 @@ import {
   Home,
 } from "lucide-react"
 import Link from "next/link"
-import { useState, useEffect } from "react"
+import { formatDistanceToNow } from "date-fns"
+import { useEffect, useMemo, useState } from "react"
+import { useRouter } from "next/navigation"
+
+import { createClient } from "@/lib/supabase/client"
 
 const getPriorityColor = (priority: string) => {
   switch (priority) {
@@ -62,57 +66,118 @@ const getStatusColor = (status: string) => {
   }
 }
 
+const getPriorityLabel = (caseItem: any): string => {
+  const raw = caseItem.priority_level ?? caseItem.priority ?? "Normal"
+  return typeof raw === "string" ? raw : String(raw)
+}
+
+const CASE_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "2-digit",
+  year: "numeric",
+})
+
 export default function ActiveCasesPage() {
   const [activeCases, setActiveCases] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const supabase = useMemo(() => createClient(), [])
+  const router = useRouter()
 
   useEffect(() => {
-    const loadCases = () => {
+    let isMounted = true
+
+    const loadCases = async () => {
+      setLoading(true)
       try {
-        const storedCases = JSON.parse(localStorage.getItem("medchrono_cases") || "[]")
-        setActiveCases(storedCases)
+        const { data, error } = await supabase.from("cases").select("*").order("updated_at", { ascending: false })
+
+        if (error) {
+          throw error
+        }
+
+        if (isMounted) {
+          setActiveCases(data ?? [])
+        }
       } catch (error) {
         console.error("Error loading cases:", error)
-        setActiveCases([])
+        if (isMounted) {
+          setActiveCases([])
+        }
       } finally {
-        setLoading(false)
+        if (isMounted) {
+          setLoading(false)
+        }
       }
     }
 
-    loadCases()
-  }, [])
+    void loadCases()
+
+    const channel = supabase
+      .channel("cases-dashboard-updates")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "cases" },
+        () => {
+          void loadCases()
+        },
+      )
+      .subscribe()
+
+    return () => {
+      isMounted = false
+      supabase.removeChannel(channel)
+    }
+  }, [supabase])
 
   const totalCases = activeCases.length
-  const highPriorityCases = activeCases.filter((c) => c.priority === "High").length
+  const highPriorityCases = activeCases.filter((c) => getPriorityLabel(c).toLowerCase() === "high").length
   const avgCaseValue =
     activeCases.length > 0
       ? activeCases.reduce((sum, c) => {
-          const value =
-            typeof c.estimatedValue === "string"
-              ? Number.parseInt(c.estimatedValue.replace(/[$,]/g, "")) || 0
-              : Number(c.estimatedValue) || 0
-          return sum + value
+          const rawValue = c.estimated_value ?? c.estimatedValue
+          if (!rawValue) return sum
+          const numeric =
+            typeof rawValue === "string"
+              ? Number.parseFloat(rawValue.replace(/[^0-9.]/g, "")) || 0
+              : Number(rawValue) || 0
+          return sum + numeric
         }, 0) / activeCases.length
       : 0
   const completionRate =
     activeCases.length > 0
-      ? Math.round(activeCases.reduce((sum, c) => sum + (Number(c.progress) || 0), 0) / activeCases.length)
+      ? Math.round(
+          activeCases.reduce((sum, c) => {
+            const value = c.progress ?? (c as Record<string, any>).case_progress ?? 0
+            const numeric = typeof value === "string" ? Number.parseFloat(value) : Number(value)
+            return sum + (Number.isNaN(numeric) ? 0 : numeric)
+          }, 0) / activeCases.length,
+        )
       : 0
 
-  const handleArchiveCase = (caseId: string) => {
-    const updatedCases = activeCases.filter((c) => c.id !== caseId)
-    setActiveCases(updatedCases)
-    localStorage.setItem("medchrono_cases", JSON.stringify(updatedCases))
+  const handleArchiveCase = async (caseId: string) => {
+    try {
+      const { error } = await supabase
+        .from("cases")
+        .update({ case_status: "Archived", updated_at: new Date().toISOString() })
+        .eq("id", caseId)
+
+      if (error) {
+        throw error
+      }
+
+      setActiveCases((prev) => prev.filter((caseItem) => caseItem.id !== caseId))
+    } catch (error) {
+      console.error("Error archiving case:", error)
+      alert("Unable to archive case. Please try again.")
+    }
   }
 
   const handleEditCase = (caseId: string) => {
-    // For now, redirect to case details page where editing can be implemented
-    window.location.href = `/dashboard/cases/${caseId}`
+    router.push(`/dashboard/cases/${caseId}`)
   }
 
   const handleGenerateChronology = (caseId: string) => {
-    // Redirect to templates page with case context
-    window.location.href = `/dashboard/templates?caseId=${caseId}`
+    router.push(`/dashboard/templates?caseId=${caseId}`)
   }
 
   if (loading) {
@@ -247,107 +312,106 @@ export default function ActiveCasesPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Case Details</TableHead>
+                    <TableHead>Case</TableHead>
                     <TableHead>Client</TableHead>
-                    <TableHead>Type</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead>Progress</TableHead>
                     <TableHead>Priority</TableHead>
+                    <TableHead>Progress</TableHead>
                     <TableHead>Attorney</TableHead>
-                    <TableHead>Est. Value</TableHead>
-                    <TableHead>Actions</TableHead>
+                    <TableHead>Updated</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {activeCases.map((case_) => (
-                    <TableRow key={case_.id}>
-                      <TableCell>
-                        <div>
-                          <div className="font-medium">{case_.name}</div>
-                          <div className="text-sm text-gray-500">#{case_.id}</div>
-                          <div className="text-xs text-gray-400 flex items-center mt-1">
-                            <Calendar className="w-3 h-3 mr-1" />
-                            {case_.incidentDate}
+                  {activeCases.map((case_) => {
+                    const status = case_.case_status ?? case_.status ?? "Active"
+                    const priority = getPriorityLabel(case_)
+                    const progressValue =
+                      typeof case_.progress === "number"
+                        ? case_.progress
+                        : typeof case_.progress === "string"
+                          ? Number.parseFloat(case_.progress)
+                          : 0
+                    const safeProgress = Number.isNaN(progressValue) ? 0 : Math.max(0, Math.min(100, Math.round(progressValue)))
+                    const estimatedValue = case_.estimated_value ?? case_.estimatedValue ?? null
+                    const lastUpdated = case_.updated_at ?? case_.last_activity ?? case_.created_at
+
+                    return (
+                      <TableRow key={case_.id}>
+                        <TableCell>
+                          <div className="font-medium text-gray-900">{case_.case_name ?? case_.name ?? "Untitled case"}</div>
+                          <div className="text-xs text-gray-500">#{case_.id}</div>
+                          <div className="mt-1 flex items-center text-xs text-gray-400">
+                            <Calendar className="mr-1 h-3 w-3" />
+                            {case_.incident_date
+                              ? CASE_DATE_FORMATTER.format(new Date(case_.incident_date))
+                              : "Incident date unavailable"}
                           </div>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center space-x-2">
-                          <User className="w-4 h-4 text-gray-400" />
-                          <span>{case_.client}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="text-xs">
-                          {case_.type}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Badge className={`text-xs ${getStatusColor(case_.status)}`}>{case_.status}</Badge>
-                      </TableCell>
-                      <TableCell>
-                        <div className="space-y-1">
-                          {case_.progress && case_.progress > 0 ? (
-                            <>
-                              <div className="flex items-center justify-between text-xs">
-                                <span>{case_.progress}%</span>
-                                <span className="text-gray-500">{case_.documentsCount || 0} docs</span>
-                              </div>
-                              <Progress value={case_.progress} className="h-2" />
-                            </>
-                          ) : (
-                            <div className="text-xs text-gray-500">No progress yet</div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2 text-sm text-gray-700">
+                            <User className="h-4 w-4 text-gray-400" />
+                            <span>{case_.client_name ?? case_.client ?? "—"}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge className={`text-xs ${getStatusColor(status)}`}>{status}</Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Badge className={`text-xs ${getPriorityColor(priority)}`}>{priority}</Badge>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-3">
+                            <Progress value={safeProgress} className="h-2 w-32" />
+                            <span className="text-xs text-gray-500">{safeProgress}%</span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="text-sm text-gray-700">{case_.assigned_attorney ?? case_.assignedAttorney ?? "—"}</div>
+                          {case_.representing_party && (
+                            <div className="text-xs text-gray-500">{case_.representing_party}</div>
                           )}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge className={`text-xs ${getPriorityColor(case_.priority)}`}>{case_.priority}</Badge>
-                      </TableCell>
-                      <TableCell>
-                        <div className="text-sm">{case_.assignedAttorney}</div>
-                        <div className="text-xs text-gray-500">{case_.lastActivity}</div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="text-sm text-gray-500">
-                          {case_.estimatedValue && case_.estimatedValue !== "" && case_.estimatedValue !== "$0" ? (
-                            <span className="font-medium text-green-600">{case_.estimatedValue}</span>
-                          ) : (
-                            "Not estimated"
+                        </TableCell>
+                        <TableCell className="text-xs text-gray-500">
+                          {lastUpdated ? formatDistanceToNow(new Date(lastUpdated), { addSuffix: true }) : "—"}
+                          {estimatedValue && (
+                            <div className="text-[10px] text-emerald-600">
+                              Est. value: {typeof estimatedValue === "string"
+                                ? estimatedValue
+                                : `$${Math.round(Number(estimatedValue)).toLocaleString()}`}
+                            </div>
                           )}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" className="h-8 w-8 p-0">
-                              <MoreHorizontal className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                            <DropdownMenuItem asChild>
-                              <Link href={`/dashboard/cases/${case_.id}`}>
-                                <Eye className="w-4 h-4 mr-2" />
-                                View Details
-                              </Link>
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => handleEditCase(case_.id)}>
-                              <Edit className="w-4 h-4 mr-2" />
-                              Edit Case
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => handleGenerateChronology(case_.id)}>
-                              <FileText className="w-4 h-4 mr-2" />
-                              Generate Chronology
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem className="text-red-600" onClick={() => handleArchiveCase(case_.id)}>
-                              Archive Case
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" className="h-8 w-8 p-0">
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                              <DropdownMenuItem asChild>
+                                <Link href={`/dashboard/cases/${case_.id}`}>
+                                  <Eye className="mr-2 h-4 w-4" /> View details
+                                </Link>
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleEditCase(case_.id)}>
+                                <Edit className="mr-2 h-4 w-4" /> Edit case
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleGenerateChronology(case_.id)}>
+                                <FileText className="mr-2 h-4 w-4" /> Generate chronology
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem onClick={() => handleArchiveCase(case_.id)} className="text-red-600">
+                                Archive case
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
                 </TableBody>
               </Table>
             )}

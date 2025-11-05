@@ -2,18 +2,21 @@
 
 import type React from "react"
 
+import { useMemo, useState } from "react"
+import Link from "next/link"
+import { useRouter } from "next/navigation"
+import { Stethoscope, Shield, ArrowLeft, CheckCircle, Users } from "lucide-react"
+
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
-import { Stethoscope, Shield, ArrowLeft, CheckCircle, Users } from "lucide-react"
-import Link from "next/link"
-import { useState } from "react"
-import { useRouter } from "next/navigation"
+import { createClient } from "@/lib/supabase/client"
 
 export default function RegisterPage() {
   const [formData, setFormData] = useState({
@@ -30,7 +33,10 @@ export default function RegisterPage() {
     marketingOptIn: false,
   })
   const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState<string | null>(null)
   const router = useRouter()
+  const supabase = useMemo(() => createClient(), [])
 
   const handleInputChange = (field: string, value: string | boolean) => {
     setFormData((prev) => ({
@@ -61,11 +67,74 @@ export default function RegisterPage() {
     }
 
     setIsLoading(true)
+    setError(null)
+    setSuccess(null)
 
-    // Simulate API call
-    setTimeout(() => {
-      router.push("/dashboard")
-    }, 1500)
+    try {
+      const {
+        data: { user, session },
+        error: signUpError,
+      } = await supabase.auth.signUp({
+        email: formData.email,
+        password: formData.password,
+        options: {
+          data: {
+            full_name: formData.attorneyName,
+            firm_name: formData.firmName,
+            phone: formData.phone,
+          },
+        },
+      })
+
+      if (signUpError) {
+        throw signUpError
+      }
+
+      if (user) {
+        const response = await fetch("/api/auth/register", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            userId: user.id,
+            firmName: formData.firmName,
+            barNumber: formData.barNumber,
+            attorneyName: formData.attorneyName,
+            phone: formData.phone,
+            caseVolume: formData.caseVolume,
+            firmSize: formData.firmSize,
+            marketingOptIn: formData.marketingOptIn,
+            hipaaAgreed: formData.hipaaAgreed,
+            dpaAgreed: formData.dpaAgreed,
+          }),
+        })
+
+        if (!response.ok) {
+          const data = await response.json().catch(() => null)
+          throw new Error(data?.error ?? "Failed to save firm profile")
+        }
+      }
+
+      if (!session) {
+        const { error: loginError } = await supabase.auth.signInWithPassword({
+          email: formData.email,
+          password: formData.password,
+        })
+
+        if (loginError) {
+          console.warn("Auto sign-in after registration failed:", loginError.message)
+        }
+      }
+
+      setSuccess("Account created successfully! Redirecting to your dashboard...")
+      setIsLoading(false)
+      setTimeout(() => router.push("/dashboard"), 1200)
+    } catch (err) {
+      console.error("Registration error:", err)
+      setError(err instanceof Error ? err.message : "Failed to create account. Please try again.")
+      setIsLoading(false)
+    }
   }
 
   return (
@@ -102,6 +171,20 @@ export default function RegisterPage() {
 
           <CardContent className="space-y-6">
             <form onSubmit={handleSubmit} className="space-y-6">
+              {error && (
+                <Alert variant="destructive">
+                  <AlertTitle>Unable to complete registration</AlertTitle>
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              )}
+
+              {success && (
+                <Alert className="border-green-200 bg-green-50 text-green-800">
+                  <AlertTitle>Success</AlertTitle>
+                  <AlertDescription>{success}</AlertDescription>
+                </Alert>
+              )}
+
               {/* Step 1: Firm Information */}
               <div className="space-y-4">
                 <div className="flex items-center space-x-2 mb-4">
