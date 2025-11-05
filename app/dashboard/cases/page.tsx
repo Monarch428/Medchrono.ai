@@ -214,6 +214,28 @@ export default function ActiveCasesPage() {
     )
   }
 
+  const filteredCases = useMemo(() => {
+    const query = searchTerm.trim().toLowerCase()
+    if (!query) {
+      return activeCases
+    }
+
+    return activeCases.filter((caseItem) => {
+      const haystacks = [
+        caseItem.case_name,
+        caseItem.client_name,
+        caseItem.assigned_attorney,
+        caseItem.case_status,
+        caseItem.priority_level,
+        caseItem.id,
+      ]
+        .filter((value): value is string => Boolean(value))
+        .map((value) => value.toLowerCase())
+
+      return haystacks.some((value) => value.includes(query))
+    })
+  }, [activeCases, searchTerm])
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
