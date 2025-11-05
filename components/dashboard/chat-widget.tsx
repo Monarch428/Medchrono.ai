@@ -10,7 +10,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import Link from "next/link"
-import { Bot, Loader2, MessageCircle, Send, Sparkles, User } from "lucide-react"
+import { Bot, Loader2, MessageCircle, Send, Sparkles, User, X } from "lucide-react"
 
 interface MessageRecord {
   id: string
@@ -41,10 +41,34 @@ export function DashboardChatWidget() {
   const [isLoading, setIsLoading] = useState(false)
   const [errorNotice, setErrorNotice] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const [isCollapsed, setIsCollapsed] = useState(false)
+  const [isMobile, setIsMobile] = useState(false)
+  const [isMobileOpen, setIsMobileOpen] = useState(false)
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages, isLoading])
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(max-width: 1023px)")
+
+    const updateIsMobile = (event: MediaQueryListEvent | MediaQueryList) => {
+      setIsMobile(event.matches)
+    }
+
+    updateIsMobile(mediaQuery)
+    mediaQuery.addEventListener("change", updateIsMobile)
+
+    return () => mediaQuery.removeEventListener("change", updateIsMobile)
+  }, [])
+
+  useEffect(() => {
+    if (!isMobile) {
+      setIsMobileOpen(false)
+    } else {
+      setIsCollapsed(false)
+    }
+  }, [isMobile])
 
   const trimmedHistory = useMemo(() => messages.slice(-MAX_HISTORY), [messages])
 
@@ -123,8 +147,8 @@ export function DashboardChatWidget() {
     void sendMessage()
   }
 
-  return (
-    <Card className="border-0 shadow-sm h-full flex flex-col">
+  const renderChatCard = (onClose?: () => void, className?: string) => (
+    <Card className={`border-0 shadow-sm flex flex-col ${className ?? ""}`}>
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between gap-3">
           <div className="space-y-1">
@@ -134,9 +158,16 @@ export function DashboardChatWidget() {
             </CardTitle>
             <CardDescription>Ask quick questions without leaving your dashboard.</CardDescription>
           </div>
-          <Badge variant="secondary" className="bg-cyan-50 text-cyan-700">
-            Beta
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Badge variant="secondary" className="bg-cyan-50 text-cyan-700">
+              Beta
+            </Badge>
+            {onClose ? (
+              <Button variant="ghost" size="icon" aria-label="Close assistant" onClick={onClose}>
+                <X className="h-4 w-4" />
+              </Button>
+            ) : null}
+          </div>
         </div>
       </CardHeader>
 
@@ -176,7 +207,7 @@ export function DashboardChatWidget() {
           <div ref={messagesEndRef} />
         </ScrollArea>
 
-        {errorNotice && <p className="text-xs text-red-600">{errorNotice}</p>}
+        {errorNotice ? <p className="text-xs text-red-600">{errorNotice}</p> : null}
 
         <div className="grid gap-2 sm:grid-cols-3">
           {DEFAULT_PROMPTS.map((prompt) => (
@@ -223,6 +254,42 @@ export function DashboardChatWidget() {
       </CardFooter>
     </Card>
   )
+
+  if (isMobile) {
+    return (
+      <>
+        {isMobileOpen ? (
+          <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center">
+            {renderChatCard(() => setIsMobileOpen(false), "w-full max-w-md max-h-full")}
+          </div>
+        ) : null}
+        <Button
+          onClick={() => setIsMobileOpen(true)}
+          className="fixed bottom-6 right-6 z-40 h-14 w-14 rounded-full bg-cyan-600 shadow-lg hover:bg-cyan-700"
+          size="icon"
+          aria-label="Open chronology assistant"
+        >
+          <MessageCircle className="h-6 w-6" />
+        </Button>
+      </>
+    )
+  }
+
+  if (isCollapsed) {
+    return (
+      <Button
+        variant="outline"
+        className="flex h-full min-h-[120px] w-full flex-col items-center justify-center gap-2 border-dashed"
+        onClick={() => setIsCollapsed(false)}
+        aria-label="Open chronology assistant"
+      >
+        <MessageCircle className="h-5 w-5 text-cyan-600" />
+        <span className="text-xs font-medium text-cyan-700">Open chronology assistant</span>
+      </Button>
+    )
+  }
+
+  return renderChatCard(() => setIsCollapsed(true), "h-full")
 }
 
 export default DashboardChatWidget

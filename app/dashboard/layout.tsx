@@ -9,19 +9,20 @@ interface DashboardLayoutProps {
 }
 
 export default async function DashboardLayout({ children }: DashboardLayoutProps) {
-  const supabase = getSupabaseServerClient()
+  const supabase = await getSupabaseServerClient()
   const {
-    data: { session },
-  } = await supabase.auth.getSession()
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser()
 
-  if (!session) {
+  if (userError || !user) {
     redirect("/login")
   }
 
   let profile: Record<string, any> | null = null
 
   try {
-    const { data, error } = await supabase.from("user_profiles").select("*").eq("id", session.user.id).maybeSingle()
+    const { data, error } = await supabase.from("user_profiles").select("*").eq("id", user.id).maybeSingle()
     if (error) {
       console.error("Failed to fetch user profile:", error.message)
     } else {
@@ -31,5 +32,5 @@ export default async function DashboardLayout({ children }: DashboardLayoutProps
     console.error("Unexpected error loading profile:", error)
   }
 
-  return <DashboardShell user={session.user} profile={profile}>{children}</DashboardShell>
+  return <DashboardShell user={user} profile={profile}>{children}</DashboardShell>
 }
