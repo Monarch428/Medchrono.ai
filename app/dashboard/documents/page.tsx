@@ -149,16 +149,56 @@ export default function DocumentsPage() {
       setLoading(true)
       try {
         setErrorMessage(null)
-        const { data: caseRecords, error: caseError } = await supabase
-          .from("cases")
-          .select("id, case_name, client_name")
-          .order("updated_at", { ascending: false })
+        const {
+          data: { user },
+        } = await supabase.auth.getUser()
 
-        if (caseError) {
-          throw caseError
+        let firmId: string | null = null
+
+        if (user) {
+          const { data: profile, error: profileError } = await supabase
+            .from("user_profiles")
+            .select("firm_id")
+            .eq("id", user.id)
+            .maybeSingle()
+
+          if (!profileError && profile?.firm_id) {
+            firmId = String(profile.firm_id)
+          } else if (profileError) {
+            console.warn(
+              "Unable to determine firm for documents:",
+              profileError.message ?? profileError,
+            )
+          }
         }
 
-        const normalizedCases = (caseRecords ?? [])
+        let caseQuery = supabase.from("cases").select("id, case_name, client_name")
+        if (firmId) {
+          caseQuery = caseQuery.eq("firm_id", firmId)
+        }
+
+        const caseResult = await caseQuery.order("updated_at", { ascending: false })
+
+        let caseRecords = caseResult.data ?? []
+
+        if (caseResult.error) {
+          console.warn(
+            "Case query failed, retrying without firm filter:",
+            caseResult.error.message ?? caseResult.error,
+          )
+          const fallback = await supabase
+            .from("cases")
+            .select("id, case_name, client_name")
+            .order("updated_at", { ascending: false })
+
+          caseRecords = fallback.data ?? []
+
+          if (fallback.error) {
+            throw fallback.error
+          }
+        }
+
+        const normalizedCases = caseRecords
           .map((caseItem) => ({
             id: caseItem?.id ? String(caseItem.id) : "",
             name: caseItem?.case_name ?? null,
@@ -192,34 +232,68 @@ export default function DocumentsPage() {
           return
         }
 
-        const selectColumns =
-          "id, document_name, original_filename, category, document_category, status, processing_status, confidence, confidence_score, created_at, updated_at, case_id, case_name, case_client, provider, file_type, file_size"
-
         const limits = [100, 50, 25]
         let documentsResult: DocumentRecord[] = []
         let lastError: any = null
 
         for (const limit of limits) {
-          const { data, error } = await supabase
+          let query = supabase
             .from("documents")
-            .select(selectColumns)
-            .in("case_id", caseIds)
+            .select("*")
             .order("created_at", { ascending: false })
             .limit(limit)
 
+          if (caseIds.length > 0) {
+            query = query.in("case_id", caseIds)
+          }
+
+          if (firmId) {
+            query = query.eq("firm_id", firmId)
+          }
+
+          const { data, error } = await query
+
           if (!error) {
             documentsResult = data ?? []
+            lastError = null
             break
           }
 
           lastError = error
 
-          if (error.code !== "57014") {
-            throw error
+          if (firmId) {
+            console.warn(
+              "Document query filtered by firm failed, retrying without firm filter:",
+              error?.message ?? error,
+            )
+
+            let fallbackQuery = supabase
+              .from("documents")
+              .select("*")
+              .order("created_at", { ascending: false })
+              .limit(limit)
+
+            if (caseIds.length > 0) {
+              fallbackQuery = fallbackQuery.in("case_id", caseIds)
+            }
+
+            const { data: fallbackData, error: fallbackError } = await fallbackQuery
+
+            if (!fallbackError) {
+              documentsResult = fallbackData ?? []
+              lastError = null
+              break
+            }
+
+            lastError = fallbackError
+          }
+
+          if (!lastError || lastError.code !== "57014") {
+            break
           }
         }
 
-        if (!documentsResult.length && lastError) {
+        if (lastError) {
           throw lastError
         }
 
@@ -254,13 +328,18 @@ export default function DocumentsPage() {
           setCaseLookup({})
           setAvailableCases([])
           const code = (error as { code?: string }).code
+          const rawMessage = (error as { message?: string }).message
           if (code === "57014") {
             setErrorMessage(
               "The document query took too long to respond. Please refine your filters or try again shortly.",
             )
           } else {
             setErrorMessage(
-              error instanceof Error ? error.message : "Unable to load documents at this time. Please try again.",
+              typeof rawMessage === "string" && rawMessage.length > 0
+                ? rawMessage
+                : error instanceof Error
+                  ? error.message
+                  : "Unable to load documents at this time. Please try again.",
             )
           }
         }

@@ -3,8 +3,8 @@ import { createClient } from "@supabase/supabase-js"
 import { cookies } from "next/headers"
 import { cache } from "react"
 
-const createSupabaseClient = cache(() => {
-  const cookieStore = cookies()
+const createSupabaseClient = cache(async () => {
+  const cookieStore = await cookies()
   return createServerComponentClient({ cookies: () => cookieStore })
 })
 

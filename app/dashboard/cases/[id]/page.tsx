@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { useParams } from "next/navigation"
+import { usePathname } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -132,14 +132,12 @@ export default function CaseDetailsPage() {
   const [isEditing, setIsEditing] = useState(false)
   const [editData, setEditData] = useState<CaseData | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const params = useParams<{ id: string | string[] }>()
+  const pathname = usePathname()
   const caseId = useMemo(() => {
-    const value = params?.id
-    if (Array.isArray(value)) {
-      return value[0] ?? ""
-    }
-    return value ?? ""
-  }, [params])
+    if (!pathname) return ""
+    const segments = pathname.split("/").filter(Boolean)
+    return segments.pop() ?? ""
+  }, [pathname])
   const supabase = useMemo(() => createClient(), [])
 
   useEffect(() => {
