@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useEffect, useMemo, useState } from "react"
+import { usePathname } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -26,6 +27,7 @@ import {
   FileCheck,
 } from "lucide-react"
 import Link from "next/link"
+import { createClient } from "@/lib/supabase/client"
 
 interface CaseData {
   id: string
@@ -45,44 +47,182 @@ interface CaseData {
   clientEmail?: string
   incidentLocation?: string
   description?: string
+  representingParty?: string
 }
 
-export default function CaseDetailsPage({ params }: { params: { id: string } }) {
+type CaseRecord = {
+  id: string
+  case_name?: string | null
+  client_name?: string | null
+  incident_date?: string | null
+  primary_injury?: string | null
+  sub_category?: string | null
+  case_status?: string | null
+  priority_level?: string | null
+  representing_party?: string | null
+  progress?: number | string | null
+  estimated_value?: string | number | null
+  assigned_attorney?: string | null
+  last_activity?: string | null
+  created_at?: string | null
+  client_phone?: string | null
+  client_email?: string | null
+  incident_location?: string | null
+  case_description?: string | null
+}
+
+const mapRecordToCaseData = (record: CaseRecord | null): CaseData | null => {
+  if (!record) return null
+
+  const numericProgress = (() => {
+    if (typeof record.progress === "number") return record.progress
+    if (typeof record.progress === "string") {
+      const parsed = Number.parseFloat(record.progress)
+      return Number.isNaN(parsed) ? 0 : parsed
+    }
+    return 0
+  })()
+
+  const estimatedValue = (() => {
+    if (typeof record.estimated_value === "number") return record.estimated_value.toString()
+    if (typeof record.estimated_value === "string") return record.estimated_value
+    return ""
+  })()
+
+  return {
+    id: String(record.id),
+    name: record.case_name ?? "Untitled case",
+    client: record.client_name ?? "—",
+    dateOfIncident: record.incident_date ?? "",
+    injuryType: record.primary_injury ?? "",
+    subCategory: record.sub_category ?? "",
+    status: record.case_status ?? "Active",
+    priority: record.priority_level ?? "Normal",
+    progress: Math.max(0, Math.min(100, Math.round(numericProgress))) || 0,
+    estimatedValue,
+    attorney: record.assigned_attorney ?? "",
+    lastActivity: record.last_activity ?? "",
+    createdAt: record.created_at ?? "",
+    clientPhone: record.client_phone ?? undefined,
+    clientEmail: record.client_email ?? undefined,
+    incidentLocation: record.incident_location ?? undefined,
+    description: record.case_description ?? undefined,
+    representingParty: record.representing_party ?? undefined,
+  }
+}
+
+const mapCaseDataToUpdates = (caseData: CaseData) => ({
+  case_name: caseData.name || null,
+  client_name: caseData.client || null,
+  incident_date: caseData.dateOfIncident || null,
+  primary_injury: caseData.injuryType || null,
+  sub_category: caseData.subCategory || null,
+  case_status: caseData.status || null,
+  priority_level: caseData.priority || null,
+  progress: Number.isFinite(caseData.progress) ? caseData.progress : 0,
+  estimated_value: caseData.estimatedValue || null,
+  assigned_attorney: caseData.attorney || null,
+  last_activity: caseData.lastActivity || null,
+  client_phone: caseData.clientPhone || null,
+  client_email: caseData.clientEmail || null,
+  incident_location: caseData.incidentLocation || null,
+  case_description: caseData.description || null,
+  representing_party: caseData.representingParty || null,
+})
+
+export default function CaseDetailsPage() {
   const [caseData, setCaseData] = useState<CaseData | null>(null)
   const [loading, setLoading] = useState(true)
   const [isEditing, setIsEditing] = useState(false)
   const [editData, setEditData] = useState<CaseData | null>(null)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const pathname = usePathname()
+  const caseId = useMemo(() => {
+    if (!pathname) return ""
+    const segments = pathname.split("/").filter(Boolean)
+    return segments.pop() ?? ""
+  }, [pathname])
+  const supabase = useMemo(() => createClient(), [])
 
   useEffect(() => {
-    const loadCaseData = () => {
+    let isMounted = true
+
+    const loadCaseData = async () => {
+      if (!caseId) {
+        setCaseData(null)
+        setEditData(null)
+        setLoading(false)
+        return
+      }
+
+      setLoading(true)
+      setErrorMessage(null)
+
       try {
-        const cases = JSON.parse(localStorage.getItem("medchrono_cases") || "[]")
-        const foundCase = cases.find((c: CaseData) => c.id === params.id)
-        setCaseData(foundCase || null)
-        setEditData(foundCase || null)
+        const { data, error } = await supabase
+          .from("cases")
+          .select(
+            "id, case_name, client_name, incident_date, primary_injury, sub_category, case_status, priority_level, representing_party, progress, estimated_value, assigned_attorney, last_activity, created_at, client_phone, client_email, incident_location, case_description",
+          )
+          .eq("id", caseId)
+          .maybeSingle()
+
+        if (error) {
+          throw error
+        }
+
+        if (!isMounted) return
+
+        const mapped = mapRecordToCaseData(data as CaseRecord | null)
+        setCaseData(mapped)
+        setEditData(mapped)
       } catch (error) {
         console.error("Error loading case data:", error)
+        if (!isMounted) return
         setCaseData(null)
+        setEditData(null)
+        setErrorMessage(
+          error instanceof Error ? error.message : "Unable to load this case. Please try again shortly.",
+        )
       } finally {
-        setLoading(false)
+        if (isMounted) {
+          setLoading(false)
+        }
       }
     }
 
-    loadCaseData()
-  }, [params.id])
+    void loadCaseData()
+
+    return () => {
+      isMounted = false
+    }
+  }, [caseId, supabase])
 
   const handleSaveEdit = () => {
-    if (!editData) return
+    const persistChanges = async () => {
+      if (!editData || !caseId) return
 
-    try {
-      const cases = JSON.parse(localStorage.getItem("medchrono_cases") || "[]")
-      const updatedCases = cases.map((c: CaseData) => (c.id === editData.id ? editData : c))
-      localStorage.setItem("medchrono_cases", JSON.stringify(updatedCases))
-      setCaseData(editData)
-      setIsEditing(false)
-    } catch (error) {
-      console.error("Error saving case data:", error)
+      try {
+        const updates = {
+          ...mapCaseDataToUpdates(editData),
+          updated_at: new Date().toISOString(),
+        }
+
+        const { error } = await supabase.from("cases").update(updates).eq("id", caseId)
+
+        if (error) {
+          throw error
+        }
+
+        setCaseData(editData)
+        setIsEditing(false)
+      } catch (error) {
+        console.error("Error saving case data:", error)
+        alert("Unable to save your changes right now. Please try again shortly.")
+      }
     }
+
+    void persistChanges()
   }
 
   const handleCancelEdit = () => {
@@ -116,7 +256,7 @@ export default function CaseDetailsPage({ params }: { params: { id: string } }) 
               </Button>
               <div>
                 <h1 className="text-3xl font-bold text-gray-900">Case Not Found</h1>
-                <p className="text-gray-600 mt-1">Case #{params.id}</p>
+                <p className="text-gray-600 mt-1">Case #{caseId || "unknown"}</p>
               </div>
             </div>
           </div>
@@ -131,8 +271,9 @@ export default function CaseDetailsPage({ params }: { params: { id: string } }) 
               </div>
               <h3 className="text-lg font-semibold text-gray-900 mb-2">No Case Data Available</h3>
               <p className="text-gray-600 text-center mb-6 max-w-md">
-                This case doesn't exist or hasn't been created yet. Start by creating your first case to see detailed
-                case information here.
+                {errorMessage
+                  ? errorMessage
+                  : "This case doesn't exist or hasn't been created yet. Start by creating your first case to see detailed case information here."}
               </p>
               <div className="flex space-x-3">
                 <Button asChild className="bg-cyan-600 hover:bg-cyan-700">

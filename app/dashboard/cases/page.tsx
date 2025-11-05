@@ -10,6 +10,8 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
@@ -37,38 +39,41 @@ import { useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 
 const getPriorityColor = (priority: string) => {
-  switch (priority) {
-    case "High":
+  const normalized = priority.toLowerCase()
+  switch (normalized) {
+    case "high":
       return "bg-red-100 text-red-800"
-    case "Medium":
+    case "medium":
       return "bg-yellow-100 text-yellow-800"
-    case "Low":
+    case "low":
       return "bg-green-100 text-green-800"
+    case "urgent":
+      return "bg-red-200 text-red-900"
     default:
       return "bg-gray-100 text-gray-800"
   }
 }
 
 const getStatusColor = (status: string) => {
-  switch (status) {
-    case "Analysis Complete":
-      return "bg-green-100 text-green-800"
-    case "Document Review":
-      return "bg-blue-100 text-blue-800"
-    case "Expert Review":
-      return "bg-purple-100 text-purple-800"
-    case "Initial Review":
-      return "bg-gray-100 text-gray-800"
-    case "Settlement Negotiation":
-      return "bg-amber-100 text-amber-800"
-    default:
-      return "bg-gray-100 text-gray-800"
-  }
+  const normalized = status.toLowerCase()
+  if (normalized.includes("investigation")) return "bg-blue-50 text-blue-700"
+  if (normalized.includes("litigation")) return "bg-purple-50 text-purple-700"
+  if (normalized.includes("settlement")) return "bg-emerald-50 text-emerald-700"
+  if (normalized.includes("trial")) return "bg-amber-50 text-amber-700"
+  if (normalized.includes("archived")) return "bg-gray-200 text-gray-700"
+  return "bg-gray-100 text-gray-800"
 }
 
 const getPriorityLabel = (caseItem: any): string => {
-  const raw = caseItem.priority_level ?? caseItem.priority ?? "Normal"
-  return typeof raw === "string" ? raw : String(raw)
+  const raw = caseItem.priority_level ?? caseItem.priority ?? "normal"
+  if (typeof raw !== "string") {
+    return String(raw)
+  }
+
+  const trimmed = raw.trim()
+  if (!trimmed) return "Normal"
+
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1).toLowerCase()
 }
 
 const CASE_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
@@ -77,11 +82,57 @@ const CASE_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
   year: "numeric",
 })
 
+const CASE_STATUS_FILTERS = [
+  { value: "all", label: "All statuses" },
+  { value: "investigation", label: "Investigation" },
+  { value: "litigation", label: "Litigation" },
+  { value: "settlement", label: "Settlement" },
+  { value: "trial", label: "Trial" },
+  { value: "archived", label: "Archived" },
+]
+
+const PRIORITY_FILTERS = [
+  { value: "all", label: "All priorities" },
+  { value: "urgent", label: "Urgent" },
+  { value: "high", label: "High" },
+  { value: "normal", label: "Normal" },
+  { value: "low", label: "Low" },
+]
+
 export default function ActiveCasesPage() {
   const [activeCases, setActiveCases] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const supabase = useMemo(() => createClient(), [])
   const router = useRouter()
+  const [searchTerm, setSearchTerm] = useState("")
+  const [statusFilter, setStatusFilter] = useState("all")
+  const [priorityFilter, setPriorityFilter] = useState("all")
+
+  const filteredCases = useMemo(() => {
+    const query = searchTerm.trim().toLowerCase()
+    return activeCases.filter((caseItem) => {
+      const haystacks = [
+        caseItem.case_name,
+        caseItem.client_name,
+        caseItem.assigned_attorney,
+        caseItem.case_status,
+        caseItem.priority_level,
+        caseItem.primary_injury,
+        caseItem.id,
+      ]
+        .filter((value): value is string => Boolean(value))
+        .map((value) => value.toLowerCase())
+
+      const matchesSearch = query === "" ? true : haystacks.some((value) => value.includes(query))
+      const normalizedStatus = (caseItem.case_status ?? caseItem.status ?? "").toLowerCase()
+      const normalizedPriority = getPriorityLabel(caseItem).toLowerCase()
+
+      const matchesStatus = statusFilter === "all" || normalizedStatus === statusFilter
+      const matchesPriority = priorityFilter === "all" || normalizedPriority === priorityFilter
+
+      return matchesSearch && matchesStatus && matchesPriority
+    })
+  }, [activeCases, searchTerm, statusFilter, priorityFilter])
 
   useEffect(() => {
     let isMounted = true
@@ -212,19 +263,57 @@ export default function ActiveCasesPage() {
             <p className="text-gray-600 mt-1">Manage and track all your ongoing cases</p>
           </div>
 
-          <div className="flex items-center space-x-4">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-              <Input placeholder="Search cases..." className="pl-10 w-80 bg-gray-50 border-0" />
-            </div>
-            <Button variant="outline" size="sm">
-              <Filter className="w-4 h-4 mr-2" />
-              Filter
-            </Button>
-            <Button className="bg-cyan-600 hover:bg-cyan-700" asChild>
-              <Link href="/dashboard/cases/new">
-                <Plus className="w-4 h-4 mr-2" />
-                New Case
+            <div className="flex items-center space-x-4">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+                <Input
+                  placeholder="Search cases..."
+                  className="pl-10 w-80 bg-gray-50 border-0"
+                  value={searchTerm}
+                  onChange={(event) => setSearchTerm(event.target.value)}
+                  aria-label="Search cases"
+                />
+              </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="flex items-center gap-2">
+                    <Filter className="w-4 h-4" />
+                    Filters
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent className="w-60" align="end">
+                  <DropdownMenuLabel>Status</DropdownMenuLabel>
+                  <DropdownMenuRadioGroup value={statusFilter} onValueChange={setStatusFilter}>
+                    {CASE_STATUS_FILTERS.map((option) => (
+                      <DropdownMenuRadioItem key={option.value} value={option.value}>
+                        {option.label}
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel>Priority</DropdownMenuLabel>
+                  <DropdownMenuRadioGroup value={priorityFilter} onValueChange={setPriorityFilter}>
+                    {PRIORITY_FILTERS.map((option) => (
+                      <DropdownMenuRadioItem key={option.value} value={option.value}>
+                        {option.label}
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onClick={() => {
+                      setStatusFilter("all")
+                      setPriorityFilter("all")
+                    }}
+                  >
+                    Reset filters
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <Button className="bg-cyan-600 hover:bg-cyan-700" asChild>
+                <Link href="/dashboard/cases/new">
+                  <Plus className="w-4 h-4 mr-2" />
+                  New Case
               </Link>
             </Button>
           </div>
@@ -308,6 +397,11 @@ export default function ActiveCasesPage() {
                   </Link>
                 </Button>
               </div>
+            ) : filteredCases.length === 0 ? (
+              <div className="text-center py-12 text-sm text-gray-500">
+                <p className="font-medium text-gray-900">No cases match your search.</p>
+                <p className="mt-1 text-gray-500">Try adjusting your keywords or clearing the search filter.</p>
+              </div>
             ) : (
               <Table>
                 <TableHeader>
@@ -323,8 +417,16 @@ export default function ActiveCasesPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {activeCases.map((case_) => {
-                    const status = case_.case_status ?? case_.status ?? "Active"
+                  {filteredCases.map((case_) => {
+                    const rawStatus = case_.case_status ?? case_.status ?? "Active"
+                    const normalizedStatus = typeof rawStatus === "string" ? rawStatus : String(rawStatus ?? "")
+                    const displayStatus = normalizedStatus
+                      ? normalizedStatus
+                          .replace(/_/g, " ")
+                          .split(" ")
+                          .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+                          .join(" ")
+                      : "Active"
                     const priority = getPriorityLabel(case_)
                     const progressValue =
                       typeof case_.progress === "number"
@@ -355,7 +457,7 @@ export default function ActiveCasesPage() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <Badge className={`text-xs ${getStatusColor(status)}`}>{status}</Badge>
+                          <Badge className={`text-xs ${getStatusColor(displayStatus)}`}>{displayStatus}</Badge>
                         </TableCell>
                         <TableCell>
                           <Badge className={`text-xs ${getPriorityColor(priority)}`}>{priority}</Badge>
